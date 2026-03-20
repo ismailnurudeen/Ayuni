@@ -1,6 +1,6 @@
-# Sway
+# Ayuni
 
-Sway is a Nigeria-focused real-dates app scaffolded as a greenfield monorepo with:
+Ayuni is a Nigeria-focused real-dates app scaffolded as a greenfield monorepo with:
 
 - `composeApp`: Kotlin Multiplatform + Compose Multiplatform consumer app
 - `backend`: NestJS API for onboarding, suggestions, matching, booking, safety, and operations

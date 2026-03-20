@@ -20,7 +20,13 @@ describe("AppService", () => {
   it("exposes logistics-only chat metadata", () => {
     const chat = service.getLogisticsChat("book-1");
     expect(chat.channelType).toBe("logistics_only");
-    expect(chat.opensAt).toContain("16:30:00");
+    expect(chat.opensAt).toContain("18:30:00");
+    expect(chat.opensBeforeHours).toBe(2);
+  });
+
+  it("returns mobile bootstrap state with reactions", () => {
+    const bootstrap = service.getBootstrap();
+    expect(bootstrap.suggestions.length).toBeGreaterThan(0);
+    expect(bootstrap.reactions).toEqual({});
   });
 });
-

@@ -1,4 +1,4 @@
-rootProject.name = "sway-social"
+rootProject.name = "ayuni"
 
 pluginManagement {
     repositories {

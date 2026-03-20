@@ -1,18 +1,18 @@
-const moderationQueue = [
-  { id: "rep-102", severity: "high", summary: "Unsafe behavior report at VI lounge", sla: "5 min" },
-  { id: "rep-099", severity: "medium", summary: "Late arrival dispute", sla: "12 min" }
-];
-
-const venues = [
-  { name: "The Lobby, Victoria Island", city: "Lagos", readiness: "ready" },
-  { name: "Maple Cafe, Wuse II", city: "Abuja", readiness: "waitlist" }
-];
-
 export function App() {
+  const moderationQueue = [
+    { id: "rep-102", severity: "high", summary: "Unsafe behavior report at VI lounge", sla: "5 min" },
+    { id: "rep-099", severity: "medium", summary: "Late arrival dispute", sla: "12 min" },
+  ];
+
+  const venues = [
+    { name: "The Lobby, Victoria Island", city: "Lagos", readiness: "ready" },
+    { name: "Maple Cafe, Wuse II", city: "Abuja", readiness: "waitlist" },
+  ];
+
   return (
     <main className="shell">
       <section className="hero">
-        <p className="eyebrow">Sway Operations</p>
+        <p className="eyebrow">Ayuni Operations</p>
         <h1>Support, moderation, and venue coverage in one console.</h1>
         <p className="lede">
           Designed for real-date operations: trust reviews, freeze decisions, venue readiness, and booking escalations.

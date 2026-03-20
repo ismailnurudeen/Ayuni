@@ -1,4 +1,4 @@
-# Running Sway
+# Running Ayuni
 
 ## What is currently verified
 
@@ -7,7 +7,7 @@
 - Backend health check:
 
 ```json
-{"ok":true,"product":"sway-social","dropHourWAT":20}
+{"ok":true,"product":"ayuni","dropHourWAT":20}
 ```
 
 ## Backend

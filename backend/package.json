@@ -1,10 +1,11 @@
 {
-  "name": "sway-social-backend",
+  "name": "ayuni-backend",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "start:dev": "nest start --watch",
     "build": "nest build",
+    "start:prod": "node dist/main.js",
     "test": "jest"
   },
   "dependencies": {

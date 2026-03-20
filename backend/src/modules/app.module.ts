@@ -5,12 +5,16 @@ import { MatchingController } from "./matching.controller";
 import { SafetyController } from "./safety.controller";
 import { VerificationController } from "./verification.controller";
 import { AuthController } from "./auth.controller";
+import { MobileController } from "./mobile.controller";
+import { OpsController } from "./ops.controller";
 import { AppService } from "./app.service";
 
 @Module({
   controllers: [
     AppController,
     AuthController,
+    MobileController,
+    OpsController,
     VerificationController,
     MatchingController,
     BookingController,
@@ -19,4 +23,3 @@ import { AppService } from "./app.service";
   providers: [AppService]
 })
 export class AppModule {}
-
