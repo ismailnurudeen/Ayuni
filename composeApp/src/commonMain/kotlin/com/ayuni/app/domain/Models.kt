@@ -11,6 +11,14 @@ data class VerificationStatus(
 )
 
 @Serializable
+data class OnboardingState(
+    val signupMethod: SignupMethod,
+    val step: OnboardingStep,
+    val completed: Boolean,
+    val phoneNumber: String = "",
+)
+
+@Serializable
 data class SuggestionProfile(
     val id: String,
     val displayName: String,
@@ -237,4 +245,18 @@ enum class BadgeTone {
 enum class HighlightTone {
     Light,
     Rich,
+}
+
+@Serializable
+enum class SignupMethod {
+    Phone,
+}
+
+@Serializable
+enum class OnboardingStep {
+    Welcome,
+    PhoneEntry,
+    OtpVerification,
+    BasicProfile,
+    Complete,
 }

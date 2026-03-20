@@ -8,6 +8,7 @@ import com.ayuni.app.domain.InboxNotification
 import com.ayuni.app.domain.MatchroundState
 import com.ayuni.app.domain.AccountSettings
 import com.ayuni.app.domain.AppPreferences
+import com.ayuni.app.domain.OnboardingState
 import com.ayuni.app.domain.SafetyState
 import com.ayuni.app.domain.SuggestionProfile
 import com.ayuni.app.domain.UserSummary
@@ -16,6 +17,7 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 data class AppScreenState(
+    val onboarding: OnboardingState,
     val verification: VerificationStatus,
     val suggestions: List<SuggestionProfile>,
     val bookings: List<DateBooking>,
@@ -30,6 +32,7 @@ data class AppScreenState(
 ) {
     companion object {
         fun demo(): AppScreenState = AppScreenState(
+            onboarding = DemoSeed.onboarding,
             verification = DemoSeed.verification,
             suggestions = DemoSeed.suggestions,
             bookings = DemoSeed.bookings,

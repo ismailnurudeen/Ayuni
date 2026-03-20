@@ -5,6 +5,11 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 data class BootstrapPayload(
+    val onboarding: com.ayuni.app.domain.OnboardingState = com.ayuni.app.domain.OnboardingState(
+        signupMethod = com.ayuni.app.domain.SignupMethod.Phone,
+        step = com.ayuni.app.domain.OnboardingStep.Welcome,
+        completed = false
+    ),
     val verification: com.ayuni.app.domain.VerificationStatus,
     val suggestions: List<com.ayuni.app.domain.SuggestionProfile>,
     val bookings: List<com.ayuni.app.domain.DateBooking>,
@@ -19,6 +24,7 @@ data class BootstrapPayload(
     val reactions: Map<String, String> = emptyMap(),
 ) {
     fun toScreenState(): AppScreenState = AppScreenState(
+        onboarding = onboarding,
         verification = verification,
         suggestions = suggestions,
         bookings = bookings,
@@ -44,4 +50,40 @@ data class MatchResponseEnvelope(
     val reason: String? = null,
     val nextStep: String? = null,
     val bootstrap: BootstrapPayload,
+)
+
+@Serializable
+data class PhoneOtpRequest(
+    val phoneNumber: String,
+)
+
+@Serializable
+data class PhoneOtpVerifyRequest(
+    val phoneNumber: String,
+    val code: String,
+)
+
+@Serializable
+data class BasicOnboardingRequest(
+    val firstName: String,
+    val birthDate: String,
+    val genderIdentity: String,
+    val interestedIn: String,
+    val city: com.ayuni.app.domain.City,
+    val acceptedTerms: Boolean,
+)
+
+@Serializable
+data class PhoneOtpResponse(
+    val phoneNumber: String,
+    val otpSent: Boolean,
+    val deliveryChannel: String,
+    val country: String,
+    val retryAfterSeconds: Int = 0,
+)
+
+@Serializable
+data class PhoneOtpVerifyResponse(
+    val verified: Boolean = false,
+    val bootstrap: BootstrapPayload? = null,
 )

@@ -24,12 +24,18 @@ import com.ayuni.app.ui.AppRoute
 import com.ayuni.app.ui.AppScreenState
 import com.ayuni.app.ui.design.AyuniTheme
 import com.ayuni.app.ui.navigation.AyuniBottomBar
+import com.ayuni.app.ui.screens.onboarding.BasicProfileOnboardingScreen
+import com.ayuni.app.ui.screens.onboarding.OnboardingFlowStep
+import com.ayuni.app.ui.screens.onboarding.OtpVerificationScreen
+import com.ayuni.app.ui.screens.onboarding.PhoneEntryScreen
+import com.ayuni.app.ui.screens.onboarding.WelcomeScreen
 import com.ayuni.app.ui.screens.round.*
 import com.ayuni.app.ui.screens.dates.DatesScreen
 import com.ayuni.app.ui.screens.notifications.NotificationsScreen
 import com.ayuni.app.ui.screens.profile.ProfileHubScreen
 import com.ayuni.app.ui.screens.profile.*
 import com.ayuni.app.ui.screens.profile.ProfileScreen
+import com.ayuni.app.platform.logError
 import kotlinx.coroutines.launch
 
 @Composable
@@ -43,6 +49,10 @@ fun AyuniApp() {
     var state by remember { mutableStateOf(AppScreenState.demo()) }
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var authSubmitting by remember { mutableStateOf(false) }
+    var authErrorMessage by remember { mutableStateOf<String?>(null) }
+    var onboardingStep by remember { mutableStateOf(OnboardingFlowStep.Welcome) }
+    var pendingPhoneNumber by remember { mutableStateOf("") }
     val reactions = remember { mutableStateMapOf<String, RoundReaction>() }
 
     fun applyBootstrap(payload: com.ayuni.app.data.api.BootstrapPayload) {
@@ -62,9 +72,23 @@ fun AyuniApp() {
                 isLoading = false
             }
             .onFailure {
+                logError("AyuniApp", "Failed to get bootstrap", it)
                 errorMessage = it.message ?: "Could not load Ayuni right now."
                 isLoading = false
             }
+    }
+
+    LaunchedEffect(state.onboarding.step, state.onboarding.completed, state.onboarding.phoneNumber) {
+        onboardingStep = when (state.onboarding.step) {
+            com.ayuni.app.domain.OnboardingStep.PhoneEntry -> OnboardingFlowStep.Phone
+            com.ayuni.app.domain.OnboardingStep.OtpVerification -> OnboardingFlowStep.Otp
+            com.ayuni.app.domain.OnboardingStep.BasicProfile -> OnboardingFlowStep.Basics
+            com.ayuni.app.domain.OnboardingStep.Complete -> OnboardingFlowStep.Basics
+            else -> OnboardingFlowStep.Welcome
+        }
+        if (state.onboarding.phoneNumber.isNotBlank()) {
+            pendingPhoneNumber = state.onboarding.phoneNumber
+        }
     }
 
     val acceptedProfiles = state.suggestions.filter { reactions[it.id] == RoundReaction.Accepted }
@@ -91,6 +115,88 @@ fun AyuniApp() {
                         ) {
                             Text(errorMessage!!, style = MaterialTheme.typography.titleMedium)
                         }
+                    }
+
+                    !state.onboarding.completed -> when (onboardingStep) {
+                        OnboardingFlowStep.Welcome -> WelcomeScreen(
+                            onContinue = {
+                                authErrorMessage = null
+                                onboardingStep = OnboardingFlowStep.Phone
+                            }
+                        )
+
+                        OnboardingFlowStep.Phone -> PhoneEntryScreen(
+                            phoneNumber = pendingPhoneNumber,
+                            isSubmitting = authSubmitting,
+                            errorMessage = authErrorMessage,
+                            onBack = { onboardingStep = OnboardingFlowStep.Welcome },
+                            onSubmit = { phone ->
+                                coroutineScope.launch {
+                                    authSubmitting = true
+                                    authErrorMessage = null
+                                    runCatching { apiClient.requestPhoneOtp(phone) }
+                                        .onSuccess {
+                                            pendingPhoneNumber = phone
+                                            onboardingStep = OnboardingFlowStep.Otp
+                                        }
+                                        .onFailure {
+                                            logError("AyuniApp", "Failed to request OTP", it)
+                                            authErrorMessage = it.message ?: "Could not send code right now."
+                                        }
+                                    authSubmitting = false
+                                }
+                            }
+                        )
+
+                        OnboardingFlowStep.Otp -> OtpVerificationScreen(
+                            phoneNumber = pendingPhoneNumber,
+                            isSubmitting = authSubmitting,
+                            errorMessage = authErrorMessage,
+                            onBack = { onboardingStep = OnboardingFlowStep.Phone },
+                            onSubmit = { code ->
+                                coroutineScope.launch {
+                                    authSubmitting = true
+                                    authErrorMessage = null
+                                    runCatching { apiClient.verifyPhoneOtp(pendingPhoneNumber, code) }
+                                        .onSuccess {
+                                            applyBootstrap(it)
+                                            onboardingStep = OnboardingFlowStep.Basics
+                                        }
+                                        .onFailure {
+                                            logError("AyuniApp", "Failed to verify OTP", it)
+                                            authErrorMessage = it.message ?: "That code did not work."
+                                        }
+                                    authSubmitting = false
+                                }
+                            }
+                        )
+
+                        OnboardingFlowStep.Basics -> BasicProfileOnboardingScreen(
+                            isSubmitting = authSubmitting,
+                            errorMessage = authErrorMessage,
+                            onSubmit = { firstName, birthDate, genderIdentity, interestedIn, city, acceptedTerms ->
+                                coroutineScope.launch {
+                                    authSubmitting = true
+                                    authErrorMessage = null
+                                    runCatching {
+                                        apiClient.completeBasicOnboarding(
+                                            firstName = firstName,
+                                            birthDate = birthDate,
+                                            genderIdentity = genderIdentity,
+                                            interestedIn = interestedIn,
+                                            city = city,
+                                            acceptedTerms = acceptedTerms
+                                        )
+                                    }
+                                        .onSuccess { applyBootstrap(it) }
+                                        .onFailure {
+                                            logError("AyuniApp", "Failed to complete onboarding", it)
+                                            authErrorMessage = it.message ?: "Could not finish signup right now."
+                                        }
+                                    authSubmitting = false
+                                }
+                            }
+                        )
                     }
 
                     else -> Scaffold(
@@ -154,8 +260,12 @@ fun AyuniApp() {
                                     onBack = { profileScreen = ProfileScreen.EditProfile },
                                     onSave = {
                                         coroutineScope.launch {
-                                            applyBootstrap(apiClient.updateProfile(state.editableProfile.copy(bio = it)))
-                                            profileScreen = ProfileScreen.EditProfile
+                                            runCatching { apiClient.updateProfile(state.editableProfile.copy(bio = it)) }
+                                                .onSuccess {
+                                                    applyBootstrap(it)
+                                                    profileScreen = ProfileScreen.EditProfile
+                                                }
+                                                .onFailure { logError("AyuniApp", "Failed to update bio", it) }
                                         }
                                     }
                                 )

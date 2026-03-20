@@ -11,6 +11,8 @@ import com.ayuni.app.domain.HighlightTone
 import com.ayuni.app.domain.InboxNotification
 import com.ayuni.app.domain.MatchroundState
 import com.ayuni.app.domain.NotificationCategory
+import com.ayuni.app.domain.OnboardingState
+import com.ayuni.app.domain.OnboardingStep
 import com.ayuni.app.domain.AccountSettings
 import com.ayuni.app.domain.AppPreferences
 import com.ayuni.app.domain.ProfileBadge
@@ -18,12 +20,20 @@ import com.ayuni.app.domain.ProfileHighlight
 import com.ayuni.app.domain.ProfileQa
 import com.ayuni.app.domain.SafetyState
 import com.ayuni.app.domain.ShareChannel
+import com.ayuni.app.domain.SignupMethod
 import com.ayuni.app.domain.SuggestionProfile
 import com.ayuni.app.domain.UserSummary
 import com.ayuni.app.domain.VerificationStatus
 import com.ayuni.app.domain.BadgeTone
 
 object DemoSeed {
+    val onboarding = OnboardingState(
+        signupMethod = SignupMethod.Phone,
+        step = OnboardingStep.Complete,
+        completed = true,
+        phoneNumber = "+234 800 000 0000",
+    )
+
     val verification = VerificationStatus(
         phoneVerified = true,
         selfieVerified = true,

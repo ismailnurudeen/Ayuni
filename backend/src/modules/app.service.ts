@@ -20,6 +20,16 @@ type VerificationStatus = {
   idRequiredBeforeDate: boolean;
 };
 
+type SignupMethod = "Phone";
+type OnboardingStep = "Welcome" | "PhoneEntry" | "OtpVerification" | "BasicProfile" | "Complete";
+
+type OnboardingState = {
+  signupMethod: SignupMethod;
+  step: OnboardingStep;
+  completed: boolean;
+  phoneNumber: string;
+};
+
 type ProfileBadge = {
   label: string;
   tone: BadgeTone;
@@ -163,6 +173,7 @@ type VenuePartner = {
 };
 
 type BootstrapPayload = {
+  onboarding: OnboardingState;
   verification: VerificationStatus;
   suggestions: SuggestionProfile[];
   bookings: DateBooking[];
@@ -183,6 +194,7 @@ type OpsDashboard = {
     activeVenueCount: number;
     totalAcceptedThisRound: number;
     totalDeclinedThisRound: number;
+    onboardingCompleted: boolean;
     supportWindow: string;
   };
   moderationQueue: SafetyReport[];
@@ -204,10 +216,17 @@ type OpsDashboard = {
 @Injectable()
 export class AppService {
   private readonly verification: VerificationStatus = {
-    phoneVerified: true,
-    selfieVerified: true,
+    phoneVerified: false,
+    selfieVerified: false,
     governmentIdVerified: false,
     idRequiredBeforeDate: true
+  };
+
+  private onboarding: OnboardingState = {
+    signupMethod: "Phone",
+    step: "Welcome",
+    completed: false,
+    phoneNumber: ""
   };
 
   private readonly suggestions: SuggestionProfile[] = [
@@ -401,9 +420,9 @@ export class AppService {
   };
 
   private readonly userSummary: UserSummary = {
-    firstName: "Nuru",
-    completionScore: 92,
-    completionLabel: "Intentional profile",
+    firstName: "You",
+    completionScore: 20,
+    completionLabel: "Finish onboarding",
     profilePhotoMood: "Night portrait",
     badges: [
       { label: "Verified", tone: "Trust" },
@@ -449,14 +468,14 @@ export class AppService {
   };
 
   private accountSettings: AccountSettings = {
-    name: "Nuru A.",
-    gender: "Woman",
-    birthDate: "1998-07-14",
-    height: "170 cm",
-    residence: "Lekki Phase 1, Lagos",
-    educationLevel: "University degree",
-    email: "nuru@example.com",
-    phoneNumber: "+234 800 000 0000"
+    name: "",
+    gender: "",
+    birthDate: "",
+    height: "",
+    residence: "",
+    educationLevel: "",
+    email: "",
+    phoneNumber: ""
   };
 
   private appPreferences: AppPreferences = {
@@ -510,6 +529,8 @@ export class AppService {
   ];
 
   private readonly reactions: Record<string, RoundReaction> = {};
+  private pendingPhoneNumber = "";
+  private readonly testOtpCode = "123456";
   private nextNotificationId = 100;
   private nextBookingId = 2;
   private nextReportId = 103;
@@ -524,6 +545,7 @@ export class AppService {
 
   getBootstrap(): BootstrapPayload {
     return {
+      onboarding: this.onboarding,
       verification: this.verification,
       suggestions: this.suggestions,
       bookings: this.bookings,
@@ -540,13 +562,80 @@ export class AppService {
   }
 
   requestPhoneOtp(phoneNumber: string) {
-    this.verification.phoneVerified = true;
+    this.pendingPhoneNumber = phoneNumber;
+    this.onboarding = {
+      ...this.onboarding,
+      step: "OtpVerification",
+      phoneNumber
+    };
     return {
       phoneNumber,
       otpSent: true,
       deliveryChannel: "SMS",
-      country: "NG"
+      country: "NG",
+      retryAfterSeconds: 30
     };
+  }
+
+  verifyPhoneOtp(phoneNumber: string, code: string) {
+    const verified = phoneNumber == this.pendingPhoneNumber && code === this.testOtpCode;
+    if (verified) {
+      this.verification.phoneVerified = true;
+      this.accountSettings.phoneNumber = phoneNumber;
+      this.onboarding = {
+        ...this.onboarding,
+        step: "BasicProfile",
+        phoneNumber
+      };
+    }
+    return {
+      verified,
+      bootstrap: this.getBootstrap()
+    };
+  }
+
+  completeBasicOnboarding(body: {
+    firstName: string;
+    birthDate: string;
+    genderIdentity: string;
+    interestedIn: string;
+    city: City;
+    acceptedTerms: boolean;
+  }) {
+    if (!body.acceptedTerms) {
+      return this.getBootstrap();
+    }
+
+    this.userSummary.firstName = body.firstName;
+    this.userSummary.completionLabel = "Profile started";
+    this.accountSettings = {
+      ...this.accountSettings,
+      name: body.firstName,
+      gender: body.genderIdentity,
+      birthDate: body.birthDate,
+      residence: body.city
+    };
+    this.datingPreferences = {
+      ...this.datingPreferences,
+      genderIdentity: body.interestedIn,
+      dateCities: [body.city]
+    };
+    this.editableProfile = {
+      ...this.editableProfile,
+      datingIntention: "Intentional dating"
+    };
+    this.onboarding = {
+      ...this.onboarding,
+      step: "Complete",
+      completed: true
+    };
+    this.pushNotification(
+      "Welcome to Ayuni",
+      "Your account is live. You can finish the rest of your profile and verification later.",
+      "Update"
+    );
+    this.refreshCompletion();
+    return this.getBootstrap();
   }
 
   getVerification() {
@@ -733,6 +822,7 @@ export class AppService {
         activeVenueCount: this.venues.filter((item) => item.readiness === "ready").length,
         totalAcceptedThisRound: Object.values(this.reactions).filter((item) => item === "Accepted").length,
         totalDeclinedThisRound: Object.values(this.reactions).filter((item) => item === "Declined").length,
+        onboardingCompleted: this.onboarding.completed,
         supportWindow: "16:00-23:00 WAT"
       },
       moderationQueue: this.reports.filter((item) => item.status === "open"),
