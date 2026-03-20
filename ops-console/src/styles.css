@@ -1,0 +1,90 @@
+:root {
+  color: #1d1d1d;
+  background:
+    radial-gradient(circle at top, rgba(230, 106, 78, 0.18), transparent 40%),
+    linear-gradient(180deg, #fff9f2 0%, #f4e8d3 100%);
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+}
+
+body {
+  margin: 0;
+}
+
+.shell {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 40px 20px 80px;
+}
+
+.hero {
+  margin-bottom: 28px;
+}
+
+.eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: #194a37;
+  font-weight: 700;
+}
+
+.lede {
+  max-width: 60ch;
+}
+
+.grid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+
+.panel {
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(25, 74, 55, 0.12);
+  border-radius: 24px;
+  padding: 20px;
+  backdrop-filter: blur(12px);
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 0;
+  border-top: 1px solid rgba(25, 74, 55, 0.08);
+}
+
+.row:first-of-type {
+  border-top: 0;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 82px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.pill.high {
+  background: #ffe1db;
+  color: #a0331f;
+}
+
+.pill.medium {
+  background: #fff0ca;
+  color: #8b5f00;
+}
+
+.pill.ready {
+  background: #dcefe5;
+  color: #194a37;
+}
+
+.pill.waitlist {
+  background: #ece6ff;
+  color: #54408f;
+}

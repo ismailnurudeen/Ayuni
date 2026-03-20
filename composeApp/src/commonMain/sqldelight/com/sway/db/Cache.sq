@@ -1,0 +1,21 @@
+CREATE TABLE suggestion_cache (
+    id TEXT NOT NULL PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    city TEXT NOT NULL,
+    bio TEXT NOT NULL,
+    trust_score INTEGER NOT NULL
+);
+
+CREATE TABLE booking_cache (
+    id TEXT NOT NULL PRIMARY KEY,
+    venue_name TEXT NOT NULL,
+    city TEXT NOT NULL,
+    start_at TEXT NOT NULL,
+    check_in_status TEXT NOT NULL
+);
+
+selectAllSuggestions:
+SELECT * FROM suggestion_cache;
+
+selectAllBookings:
+SELECT * FROM booking_cache;

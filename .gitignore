@@ -1,0 +1,15 @@
+.gradle/
+.idea/
+.kotlin/
+build/
+out/
+dist/
+node_modules/
+coverage/
+.DS_Store
+local.properties
+composeApp/build/
+backend/dist/
+backend/coverage/
+ops-console/dist/
+
