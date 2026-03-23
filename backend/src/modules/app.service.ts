@@ -924,16 +924,22 @@ export class AppService implements OnModuleInit {
     const userId = this.resolveUserId(rawUserId);
     await this.ensureUser(userId);
 
-    await this.database.query(
-      `
-        UPDATE safety_reports
-        SET status = 'resolved',
-            payload = jsonb_set(payload, '{status}', to_jsonb('resolved'::text), false),
-            updated_at = NOW()
-        WHERE id = $1 AND user_id = $2
-      `,
-      [reportId, userId]
-    );
+    await this.database.withTransaction(async (client) => {
+      const row = await client.query<{ payload: SafetyReport }>(
+        "SELECT payload FROM safety_reports WHERE id = $1 AND user_id = $2",
+        [reportId, userId]
+      );
+      
+      if (row.rows.length > 0) {
+        const report = row.rows[0].payload;
+        report.status = "resolved";
+        
+        await client.query(
+          "UPDATE safety_reports SET status = $1, payload = $2, updated_at = NOW() WHERE id = $3 AND user_id = $4",
+          ["resolved", report, reportId, userId]
+        );
+      }
+    });
 
     return this.getOpsDashboard(userId);
   }

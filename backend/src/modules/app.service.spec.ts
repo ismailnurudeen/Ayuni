@@ -680,4 +680,93 @@ describe("AppService", () => {
       expect(updatedBooking.status).toBe("confirmed");
     });
   });
+
+  describe("Ops console", () => {
+    it("returns ops dashboard with live data", async () => {
+      await service.getBootstrap("ops-user");
+      
+      const dashboard = await service.getOpsDashboard("ops-user");
+
+      expect(dashboard.overview).toBeDefined();
+      expect(dashboard.overview.pendingReports).toBeGreaterThanOrEqual(0);
+      expect(dashboard.overview.activeVenueCount).toBeGreaterThanOrEqual(0);
+      expect(dashboard.moderationQueue).toBeInstanceOf(Array);
+      expect(dashboard.venueNetwork).toBeInstanceOf(Array);
+      expect(dashboard.bookings).toBeInstanceOf(Array);
+      expect(dashboard.reactions).toBeInstanceOf(Array);
+    });
+
+    it("resolves safety reports", async () => {
+      await service.getBootstrap("ops-resolve-user");
+      
+      // Create a report for this specific user
+      await service.createReport(
+        {
+          category: "UnsafeBehavior",
+          bookingId: "book-1",
+          details: "Test report for ops resolution"
+        },
+        "ops-resolve-user"
+      );
+
+      // Verify report is in user's queue
+      let dashboard = await service.getOpsDashboard("ops-resolve-user");
+      const reportToResolve = dashboard.moderationQueue.find((r) => r.details === "Test report for ops resolution");
+      expect(reportToResolve).toBeDefined();
+      expect(reportToResolve!.status).toBe("open");
+
+      // Resolve the report
+      await service.resolveReport(reportToResolve!.id, "ops-resolve-user");
+
+      // Verify report is resolved (removed from queue)
+      dashboard = await service.getOpsDashboard("ops-resolve-user");
+      const resolvedReport = dashboard.moderationQueue.find((r) => r.id === reportToResolve!.id);
+      expect(resolvedReport).toBeUndefined();
+    });
+
+    it("escalates bookings", async () => {
+      const bootstrap = await service.getBootstrap("ops-booking-user");
+      const matchId = bootstrap.suggestions[0].id;
+      
+      // Create a booking
+      const bookingResult = await service.createBooking(matchId, "ops-booking-user");
+      const bookingId = bookingResult.booking.id;
+
+      // Verify initial check-in status
+      expect(bookingResult.booking.checkInStatus).not.toBe("SupportFlagged");
+
+      // Escalate booking
+      await service.escalateBooking(bookingId, "ops-booking-user");
+
+      // Verify booking is escalated
+      const dashboard = await service.getOpsDashboard("ops-booking-user");
+      const escalatedBooking = dashboard.bookings.find((b) => b.id === bookingId);
+      expect(escalatedBooking).toBeDefined();
+      expect(escalatedBooking!.checkInStatus).toBe("SupportFlagged");
+    });
+
+    it("toggles venue readiness", async () => {
+      // Get initial venue state
+      const initialDashboard = await service.getOpsDashboard();
+      expect(initialDashboard.venueNetwork.length).toBeGreaterThan(0);
+      
+      const venue = initialDashboard.venueNetwork[0];
+      const initialReadiness = venue.readiness;
+
+      // Toggle venue
+      await service.toggleVenue(venue.id);
+
+      // Verify venue readiness changed
+      const updatedDashboard = await service.getOpsDashboard();
+      const updatedVenue = updatedDashboard.venueNetwork.find((v) => v.id === venue.id);
+      expect(updatedVenue).toBeDefined();
+      expect(updatedVenue!.readiness).not.toBe(initialReadiness);
+      
+      // Toggle back
+      await service.toggleVenue(venue.id);
+      const finalDashboard = await service.getOpsDashboard();
+      const finalVenue = finalDashboard.venueNetwork.find((v) => v.id === venue.id);
+      expect(finalVenue!.readiness).toBe(initialReadiness);
+    });
+  });
 });
