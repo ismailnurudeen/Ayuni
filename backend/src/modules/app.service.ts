@@ -5,6 +5,7 @@ import { DatabaseService } from "../database/database.service";
 import { AuthService } from "./auth.service";
 import { OtpService } from "./otp.service";
 import { TwilioSmsService } from "./sms.service";
+import { MediaService } from "./media.service";
 import {
   AccountSettings,
   AppPreferences,
@@ -73,7 +74,8 @@ export class AppService implements OnModuleInit {
     private readonly database: DatabaseService,
     private readonly authService: AuthService,
     private readonly otpService: OtpService,
-    private readonly smsService: TwilioSmsService
+    private readonly smsService: TwilioSmsService,
+    private readonly mediaService: MediaService
   ) {}
 
   async onModuleInit() {
@@ -801,14 +803,18 @@ export class AppService implements OnModuleInit {
     const state = await this.loadState(userId, client);
     await this.ensureActiveRound(userId, state, client);
 
-    const [suggestions, bookings, notifications, reports, reactions, venues] = await Promise.all([
+    const [suggestions, bookings, notifications, reports, reactions, venues, media] = await Promise.all([
       this.loadRoundSuggestions(userId, queryable),
       this.loadBookings(userId, queryable),
       this.loadNotifications(userId, queryable),
       this.loadReports(userId, queryable),
       this.loadReactions(userId, queryable),
-      this.loadVenues(queryable)
+      this.loadVenues(queryable),
+      this.mediaService.getUserMedia(userId, client)
     ]);
+
+    // Populate mediaSlots with actual media URLs
+    state.editableProfile.mediaSlots = media.map(m => m.storageUrl);
 
     return {
       state,

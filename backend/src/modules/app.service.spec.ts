@@ -4,6 +4,7 @@ import { DatabaseService } from "../database/database.service";
 import { AuthService } from "./auth.service";
 import { OtpService } from "./otp.service";
 import { TwilioSmsService } from "./sms.service";
+import { MediaService } from "./media.service";
 import { AppService } from "./app.service";
 
 describe("AppService", () => {
@@ -12,6 +13,7 @@ describe("AppService", () => {
   let authService: AuthService;
   let otpService: OtpService;
   let smsService: TwilioSmsService;
+  let mediaService: MediaService;
   let service: AppService;
 
   beforeEach(async () => {
@@ -25,7 +27,8 @@ describe("AppService", () => {
     authService = new AuthService(databaseService);
     otpService = new OtpService();
     smsService = new TwilioSmsService();
-    service = new AppService(databaseService, authService, otpService, smsService);
+    mediaService = new MediaService(databaseService);
+    service = new AppService(databaseService, authService, otpService, smsService, mediaService);
     await service.onModuleInit();
   });
 
@@ -72,7 +75,8 @@ describe("AppService", () => {
     const restartedAuthService = new AuthService(restartedDatabaseService);
     const restartedOtpService = new OtpService();
     const restartedSmsService = new TwilioSmsService();
-    const restartedService = new AppService(restartedDatabaseService, restartedAuthService, restartedOtpService, restartedSmsService);
+    const restartedMediaService = new MediaService(restartedDatabaseService);
+    const restartedService = new AppService(restartedDatabaseService, restartedAuthService, restartedOtpService, restartedSmsService, restartedMediaService);
     await restartedService.onModuleInit();
 
     const bootstrap = await restartedService.getBootstrap("demo-user");
