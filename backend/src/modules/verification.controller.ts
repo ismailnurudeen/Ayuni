@@ -17,6 +17,23 @@ export class VerificationController {
     return this.appService.submitSelfie(body.imageUrl, userId);
   }
 
+  @Post("gov-id")
+  submitGovId(
+    @Body() body: { 
+      frontImageUrl: string;
+      backImageUrl?: string;
+      idType: "national_id" | "drivers_license" | "passport" | "voters_card";
+    },
+    @UserId() userId: string
+  ) {
+    return this.appService.submitGovId(
+      body.frontImageUrl,
+      body.idType,
+      userId,
+      body.backImageUrl
+    );
+  }
+
   @Post("id")
   verifyId(@UserId() userId: string) {
     return this.appService.verifyId(userId);

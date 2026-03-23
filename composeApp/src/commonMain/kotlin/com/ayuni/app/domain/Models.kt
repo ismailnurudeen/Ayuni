@@ -8,6 +8,9 @@ data class VerificationStatus(
     val selfieVerified: Boolean,
     val governmentIdVerified: Boolean,
     val idRequiredBeforeDate: Boolean = true,
+    val govIdStatus: String? = null, // not_submitted, pending_review, approved, rejected
+    val govIdSubmissionId: String? = null,
+    val govIdRejectionReason: String? = null,
 )
 
 @Serializable

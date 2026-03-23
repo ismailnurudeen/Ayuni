@@ -129,6 +129,18 @@ class AyuniRepository(private val apiClient: AyuniApiClient) {
         response.message ?: "Selfie submitted successfully"
     }
 
+    suspend fun submitGovId(
+        frontImageUrl: String,
+        idType: String,
+        backImageUrl: String? = null
+    ): Result<String> = runCatching {
+        val response = apiClient.submitGovId(frontImageUrl, idType, backImageUrl)
+        if (response.status != "pending_review") {
+            throw Exception(response.message ?: "Failed to submit government ID")
+        }
+        response.message ?: "Government ID submitted successfully"
+    }
+
     // Safety Reporting
     suspend fun createSafetyReport(
         bookingId: String,

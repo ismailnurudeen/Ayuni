@@ -15,14 +15,16 @@ import {
   UserStateRecord,
   UserSummary,
   VenuePartner,
-  VerificationStatus
+  VerificationStatus,
+  GovIdSubmission
 } from "./app.types";
 
 export const demoVerification: VerificationStatus = {
   phoneVerified: false,
   selfieVerified: false,
   governmentIdVerified: false,
-  idRequiredBeforeDate: true
+  idRequiredBeforeDate: true,
+  govIdStatus: "not_submitted"
 };
 
 export const demoOnboarding: OnboardingState = {

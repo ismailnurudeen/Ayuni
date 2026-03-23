@@ -38,6 +38,9 @@ export type VerificationStatus = {
   selfieVerified: boolean;
   governmentIdVerified: boolean;
   idRequiredBeforeDate: boolean;
+  govIdStatus?: "not_submitted" | "pending_review" | "approved" | "rejected";
+  govIdSubmissionId?: string;
+  govIdRejectionReason?: string;
 };
 
 export type SignupMethod = "Phone";
@@ -238,6 +241,24 @@ export type SelfieSubmission = {
   userPhone?: string;
 };
 
+export type GovIdSubmission = {
+  id: string;
+  userId: string;
+  frontImageUrl: string;
+  backImageUrl?: string;
+  idType: "national_id" | "drivers_license" | "passport" | "voters_card";
+  reviewStatus: "pending" | "approved" | "rejected";
+  submittedAt: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+  rejectionReason?: string;
+  userName?: string;
+  userPhone?: string;
+  extractedName?: string;
+  extractedDob?: string;
+  extractedIdNumber?: string;
+};
+
 export type PaymentRecord = {
   id: string;
   paymentMethod: PaymentMethod;
@@ -286,10 +307,15 @@ export type OpsDashboard = {
     onboardingCompleted: boolean;
     supportWindow: string;
     pendingSelfieReviews: number;
+    pendingGovIdReviews: number;
     activeFreezes: number;
+  };
+  featureToggles: {
+    requireGovIdForBooking: boolean;
   };
   moderationQueue: SafetyReport[];
   selfieQueue: SelfieSubmission[];
+  govIdQueue: GovIdSubmission[];
   venueNetwork: VenuePartner[];
   bookings: DateBooking[];
   verification: VerificationStatus;

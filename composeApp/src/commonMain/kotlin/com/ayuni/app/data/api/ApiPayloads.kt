@@ -171,6 +171,20 @@ data class SelfieSubmissionResponse(
 )
 
 @Serializable
+data class GovIdSubmissionRequest(
+    val frontImageUrl: String,
+    val idType: String, // national_id, drivers_license, passport, voters_card
+    val backImageUrl: String? = null,
+)
+
+@Serializable
+data class GovIdSubmissionResponse(
+    val submissionId: String = "",
+    val status: String,
+    val message: String? = null,
+)
+
+@Serializable
 data class SafetyReportRequest(
     val category: String, // LateArrival, NoShow, UnsafeBehavior
     val details: String,

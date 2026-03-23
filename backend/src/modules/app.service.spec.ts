@@ -1107,4 +1107,111 @@ describe("AppService", () => {
       expect(liftNotification).toBeDefined();
     });
   });
+
+  describe("government ID verification", () => {
+    it("submits government ID and sets status to pending_review", async () => {
+      await service.getBootstrap("govid-user");
+      
+      // Submit gov ID
+      const result = await service.submitGovId(
+        "https://example.com/id-front.jpg",
+        "national_id",
+        "govid-user",
+        "https://example.com/id-back.jpg"
+      );
+      
+      expect(result.submissionId).toBeDefined();
+      expect(result.status).toBe("pending_review");
+      
+      // Check verification state
+      const bootstrap = await service.getBootstrap("govid-user");
+      expect(bootstrap.verification.govIdStatus).toBe("pending_review");
+      expect(bootstrap.verification.governmentIdVerified).toBe(false);
+      expect(bootstrap.verification.govIdSubmissionId).toBe(result.submissionId);
+      
+      // Verify notification
+      const notification = bootstrap.notifications.find(n => n.title.includes("Government ID submitted"));
+      expect(notification).toBeDefined();
+    });
+
+    it("blocks booking when gov ID requirement is enabled and ID not verified", async () => {
+      const bootstrap = await service.getBootstrap("blocked-user");
+      const matchId = bootstrap.suggestions[0].id;
+      
+      // Enable gov ID requirement
+      await service.setFeatureToggle("require_gov_id_for_booking", true, "ops-user");
+      
+      // Try to create booking (should fail)
+      await expect(
+        service.createBooking(matchId, "blocked-user")
+      ).rejects.toThrow(/government ID/);
+      
+      // Try to submit availability (should fail)
+      await expect(
+        service.submitAvailability(matchId, ["Saturday evening"], "blocked-user")
+      ).rejects.toThrow(/government ID/);
+    });
+
+    it("allows booking when gov ID requirement is enabled and ID is verified", async () => {
+      const bootstrap = await service.getBootstrap("verified-user");
+      const matchId = bootstrap.suggestions[0].id;
+      
+      // Enable gov ID requirement
+      await service.setFeatureToggle("require_gov_id_for_booking", true, "ops-user");
+      
+      // Submit and approve gov ID
+      const submission = await service.submitGovId(
+        "https://example.com/id-front.jpg",
+        "passport",
+        "verified-user"
+      );
+      await service.approveGovId(submission.submissionId, "ops-user");
+      
+      // Check verification
+      const verified = await service.getBootstrap("verified-user");
+      expect(verified.verification.governmentIdVerified).toBe(true);
+      expect(verified.verification.govIdStatus).toBe("approved");
+      
+      // Should now be able to submit availability
+      const result = await service.submitAvailability(matchId, ["Saturday evening"], "verified-user");
+      expect(result.bookingId).toBeDefined();
+    });
+
+    it("rejects government ID with reason", async () => {
+      await service.getBootstrap("reject-user");
+      
+      // Submit gov ID
+      const submission = await service.submitGovId(
+        "https://example.com/id-front.jpg",
+        "drivers_license",
+        "reject-user"
+      );
+      
+      // Reject with reason
+      await service.rejectGovId(submission.submissionId, "Photo is blurry", "ops-user");
+      
+      // Check verification state
+      const bootstrap = await service.getBootstrap("reject-user");
+      expect(bootstrap.verification.governmentIdVerified).toBe(false);
+      expect(bootstrap.verification.govIdStatus).toBe("rejected");
+      expect(bootstrap.verification.govIdRejectionReason).toBe("Photo is blurry");
+      
+      // Verify rejection notification
+      const notification = bootstrap.notifications.find(n => n.title.includes("needs retry"));
+      expect(notification).toBeDefined();
+      expect(notification?.body).toContain("Photo is blurry");
+    });
+
+    it("allows booking when gov ID requirement is disabled", async () => {
+      const bootstrap = await service.getBootstrap("no-id-user");
+      const matchId = bootstrap.suggestions[0].id;
+      
+      // Disable gov ID requirement
+      await service.setFeatureToggle("require_gov_id_for_booking", false, "ops-user");
+      
+      // Should be able to submit availability without verified ID
+      const result = await service.submitAvailability(matchId, ["Saturday evening"], "no-id-user");
+      expect(result.bookingId).toBeDefined();
+    });
+  });
 });

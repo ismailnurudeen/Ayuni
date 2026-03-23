@@ -1,4 +1,4 @@
-import { Controller, Get, Headers, Param, Post } from "@nestjs/common";
+import { Body, Controller, Get, Headers, Param, Post } from "@nestjs/common";
 import { AppService } from "./app.service";
 
 @Controller("ops")
@@ -43,5 +43,29 @@ export class OpsController {
   @Post("selfies/:id/reject")
   rejectSelfie(@Param("id") id: string, @Headers("x-user-id") opsUserId?: string) {
     return this.appService.rejectSelfie(id, opsUserId);
+  }
+
+  @Post("gov-ids/:id/approve")
+  approveGovId(@Param("id") id: string, @Headers("x-user-id") opsUserId?: string) {
+    return this.appService.approveGovId(id, opsUserId);
+  }
+
+  @Post("gov-ids/:id/reject")
+  rejectGovId(
+    @Param("id") id: string,
+    @Body() body: { reason?: string },
+    @Headers("x-user-id") opsUserId?: string
+  ) {
+    return this.appService.rejectGovId(id, body.reason, opsUserId);
+  }
+
+  @Post("feature-toggles/:name/enable")
+  enableFeature(@Param("name") name: string, @Headers("x-user-id") opsUserId?: string) {
+    return this.appService.setFeatureToggle(name, true, opsUserId);
+  }
+
+  @Post("feature-toggles/:name/disable")
+  disableFeature(@Param("name") name: string, @Headers("x-user-id") opsUserId?: string) {
+    return this.appService.setFeatureToggle(name, false, opsUserId);
   }
 }

@@ -55,13 +55,28 @@ type OpsDashboard = {
     onboardingCompleted: boolean;
     supportWindow: string;
     pendingSelfieReviews: number;
+    pendingGovIdReviews: number;
     activeFreezes: number;
+  };
+  featureToggles: {
+    requireGovIdForBooking: boolean;
   };
   moderationQueue: SafetyReport[];
   selfieQueue: Array<{
     id: string;
     userId: string;
     imageUrl: string;
+    reviewStatus: "pending" | "approved" | "rejected";
+    submittedAt: string;
+    userName?: string;
+    userPhone?: string;
+  }>;
+  govIdQueue: Array<{
+    id: string;
+    userId: string;
+    frontImageUrl: string;
+    backImageUrl?: string;
+    idType: "national_id" | "drivers_license" | "passport" | "voters_card";
     reviewStatus: "pending" | "approved" | "rejected";
     submittedAt: string;
     userName?: string;
@@ -255,6 +270,80 @@ export function App() {
     }
   };
 
+  const handleApproveGovId = async (submissionId: string) => {
+    try {
+      setActionLoading(submissionId);
+      const response = await fetch(`${API_BASE}/ops/gov-ids/${submissionId}/approve`, {
+        method: "POST",
+        headers: {
+          "x-user-id": "ops-user"
+        }
+      });
+      if (!response.ok) {
+        throw new Error("Failed to approve government ID");
+      }
+      const updatedDashboard = await response.json();
+      setDashboard(updatedDashboard);
+    } catch (err) {
+      console.error("Error approving government ID:", err);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleRejectGovId = async (submissionId: string) => {
+    const reason = prompt("Rejection reason (optional):");
+    try {
+      setActionLoading(submissionId);
+      const response = await fetch(`${API_BASE}/ops/gov-ids/${submissionId}/reject`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-id": "ops-user"
+        },
+        body: JSON.stringify({ reason: reason || undefined })
+      });
+      if (!response.ok) {
+        throw new Error("Failed to reject government ID");
+      }
+      const updatedDashboard = await response.json();
+      setDashboard(updatedDashboard);
+    } catch (err) {
+      console.error("Error rejecting government ID:", err);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleToggleGovIdRequirement = async () => {
+    if (!dashboard) return;
+    const newValue = !dashboard.featureToggles.requireGovIdForBooking;
+    const action = newValue ? "enable" : "disable";
+    
+    if (!confirm(`${newValue ? "Enable" : "Disable"} government ID requirement for booking?`)) {
+      return;
+    }
+
+    try {
+      setActionLoading("toggle-govid");
+      const response = await fetch(`${API_BASE}/ops/feature-toggles/require_gov_id_for_booking/${action}`, {
+        method: "POST",
+        headers: {
+          "x-user-id": "ops-user"
+        }
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to ${action} feature toggle`);
+      }
+      const updatedDashboard = await response.json();
+      setDashboard(updatedDashboard);
+    } catch (err) {
+      console.error(`Error toggling gov ID requirement:`, err);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   if (loading) {
     return (
       <main className="shell">
@@ -290,7 +379,7 @@ export function App() {
           Designed for real-date operations: trust reviews, freeze decisions, venue readiness, and booking escalations.
         </p>
         <div style={{ marginTop: "1rem", fontSize: "0.9rem", opacity: 0.8 }}>
-          <strong>Overview:</strong> {overview.pendingReports} pending reports • {overview.pendingSelfieReviews || 0} pending selfies • {overview.activeVenueCount} active
+          <strong>Overview:</strong> {overview.pendingReports} pending reports • {overview.pendingSelfieReviews || 0} pending selfies • {overview.pendingGovIdReviews || 0} pending IDs • {overview.activeVenueCount} active
           venues • {overview.totalAcceptedThisRound} accepted / {overview.totalDeclinedThisRound} declined this round
         </div>
       </section>
@@ -354,6 +443,119 @@ export function App() {
               </div>
             ))
           )}
+        </article>
+
+        <article className="panel">
+          <h2>Government ID Verification ({dashboard.govIdQueue?.length || 0})</h2>
+          {(!dashboard.govIdQueue || dashboard.govIdQueue.length === 0) ? (
+            <p style={{ opacity: 0.6, fontStyle: "italic" }}>No pending ID reviews</p>
+          ) : (
+            dashboard.govIdQueue.map((submission) => (
+              <div key={submission.id} className="row" style={{ borderBottom: "1px solid #eee", paddingBottom: "1rem", marginBottom: "1rem" }}>
+                <div>
+                  <strong>{submission.userName || "Unknown User"}</strong>
+                  <p style={{ fontSize: "0.85rem", opacity: 0.8 }}>
+                    {submission.userPhone || submission.userId}
+                  </p>
+                  <p style={{ fontSize: "0.85rem", marginTop: "0.25rem" }}>
+                    <strong>ID Type:</strong> {submission.idType.replace("_", " ").toUpperCase()}
+                  </p>
+                  <small>Submitted: {new Date(submission.submittedAt).toLocaleString()}</small>
+                  <br/>
+                  <div style={{ display: "flex", gap: "1rem", marginTop: "0.5rem" }}>
+                    <a 
+                      href={submission.frontImageUrl} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      style={{ fontSize: "0.85rem", color: "#C17F5F" }}
+                    >
+                      View Front Image
+                    </a>
+                    {submission.backImageUrl && (
+                      <a 
+                        href={submission.backImageUrl} 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        style={{ fontSize: "0.85rem", color: "#C17F5F" }}
+                      >
+                        View Back Image
+                      </a>
+                    )}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: "0.5rem", flexDirection: "column" }}>
+                  <button
+                    onClick={() => handleApproveGovId(submission.id)}
+                    disabled={actionLoading === submission.id}
+                    style={{
+                      padding: "0.4rem 0.8rem",
+                      fontSize: "0.85rem",
+                      backgroundColor: "#4CAF50",
+                      color: "white",
+                      border: "none",
+                      borderRadius: "4px",
+                      cursor: actionLoading === submission.id ? "wait" : "pointer"
+                    }}
+                  >
+                    {actionLoading === submission.id ? "..." : "✓ Approve"}
+                  </button>
+                  <button
+                    onClick={() => handleRejectGovId(submission.id)}
+                    disabled={actionLoading === submission.id}
+                    style={{
+                      padding: "0.4rem 0.8rem",
+                      fontSize: "0.85rem",
+                      backgroundColor: "#f44336",
+                      color: "white",
+                      border: "none",
+                      borderRadius: "4px",
+                      cursor: actionLoading === submission.id ? "wait" : "pointer"
+                    }}
+                  >
+                    {actionLoading === submission.id ? "..." : "✗ Reject"}
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </article>
+
+        <article className="panel">
+          <h2>Feature Configuration</h2>
+          <div className="row" style={{ borderBottom: "1px solid #eee", paddingBottom: "1rem" }}>
+            <div>
+              <strong>Require Government ID for Booking</strong>
+              <p style={{ fontSize: "0.85rem", opacity: 0.8, marginTop: "0.25rem" }}>
+                When enabled, users must have an approved government ID before they can book their first date.
+              </p>
+              <p style={{ fontSize: "0.85rem", marginTop: "0.5rem" }}>
+                <strong>Status:</strong> {" "}
+                <span style={{ 
+                  color: dashboard.featureToggles?.requireGovIdForBooking ? "#4CAF50" : "#999",
+                  fontWeight: "bold"
+                }}>
+                  {dashboard.featureToggles?.requireGovIdForBooking ? "✓ ENABLED" : "○ DISABLED"}
+                </span>
+              </p>
+            </div>
+            <div>
+              <button
+                onClick={handleToggleGovIdRequirement}
+                disabled={actionLoading === "toggle-govid"}
+                style={{
+                  padding: "0.5rem 1rem",
+                  fontSize: "0.9rem",
+                  backgroundColor: dashboard.featureToggles?.requireGovIdForBooking ? "#f44336" : "#4CAF50",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "4px",
+                  cursor: actionLoading === "toggle-govid" ? "wait" : "pointer"
+                }}
+              >
+                {actionLoading === "toggle-govid" ? "..." : dashboard.featureToggles?.requireGovIdForBooking ? "Disable" : "Enable"}
+              </button>
+            </div>
+          </div>
         </article>
 
         <article className="panel">

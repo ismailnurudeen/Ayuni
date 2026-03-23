@@ -196,6 +196,20 @@ class AyuniApiClient(
             setBody(SelfieSubmissionRequest(imageUrl = imageUrl))
         }.body<SelfieSubmissionResponse>()
 
+    suspend fun submitGovId(
+        frontImageUrl: String,
+        idType: String,
+        backImageUrl: String? = null
+    ): GovIdSubmissionResponse =
+        httpClient.post("$baseUrl/verification/gov-id") {
+            contentType(ContentType.Application.Json)
+            setBody(GovIdSubmissionRequest(
+                frontImageUrl = frontImageUrl,
+                idType = idType,
+                backImageUrl = backImageUrl
+            ))
+        }.body<GovIdSubmissionResponse>()
+
     // Safety Reporting
     suspend fun createSafetyReport(bookingId: String, category: String, details: String): SafetyReportResponse =
         httpClient.post("$baseUrl/bookings/$bookingId/report") {

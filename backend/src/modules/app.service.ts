@@ -384,6 +384,50 @@ export class AppService implements OnModuleInit {
     };
   }
 
+  async submitGovId(
+    frontImageUrl: string,
+    idType: "national_id" | "drivers_license" | "passport" | "voters_card",
+    rawUserId?: string,
+    backImageUrl?: string
+  ) {
+    const userId = this.resolveUserId(rawUserId);
+    await this.ensureUser(userId);
+
+    return await this.database.withTransaction(async (client) => {
+      const submissionId = this.generateId();
+      
+      // Create gov ID submission in pending state
+      await client.query(
+        `INSERT INTO gov_id_submissions 
+         (id, user_id, front_image_url, back_image_url, id_type, review_status, submitted_at)
+         VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+        [submissionId, userId, frontImageUrl, backImageUrl || null, idType, "pending"]
+      );
+
+      // Update verification status
+      const state = await this.loadState(userId, client);
+      state.verification.govIdStatus = "pending_review";
+      state.verification.govIdSubmissionId = submissionId;
+      
+      // Notify user
+      await this.pushNotification(
+        userId,
+        state,
+        "Government ID submitted for review",
+        "We'll review your ID shortly. This usually takes a few hours.",
+        "Update",
+        client
+      );
+      await this.saveState(userId, state, client);
+
+      return {
+        submissionId,
+        status: "pending_review",
+        message: "Government ID submitted successfully and is awaiting review"
+      };
+    });
+  }
+
   async getDailySuggestions(city: City, rawUserId?: string) {
     const aggregate = await this.loadAggregate(this.resolveUserId(rawUserId));
     return aggregate.suggestions.filter((profile) => profile.city === city && !aggregate.reactions[profile.id]).slice(0, 5);
@@ -461,6 +505,22 @@ export class AppService implements OnModuleInit {
       // Check if user is frozen
       if (this.isFrozen(state)) {
         throw new Error(`Account is frozen until ${state.safety.activeFreeze!.frozenUntil}. Please contact support.`);
+      }
+      
+      // Check if gov ID verification is required
+      const toggleRows = await client.query<{ enabled: boolean }>(
+        "SELECT enabled FROM feature_toggles WHERE name = $1",
+        ["require_gov_id_for_booking"]
+      );
+      const requireGovId = toggleRows.rows[0]?.enabled || false;
+      
+      if (requireGovId && !state.verification.governmentIdVerified) {
+        const statusMsg = state.verification.govIdStatus === "pending_review"
+          ? "Your government ID is being reviewed. You'll be able to submit availability once it's approved."
+          : state.verification.govIdStatus === "rejected"
+          ? `Your ID was rejected: ${state.verification.govIdRejectionReason || "Please resubmit a clear photo."}`
+          : "Please submit your government ID before booking your first date.";
+        throw new Error(statusMsg);
       }
       
       const profile = aggregate.suggestions.find((s) => s.id === matchId);
@@ -735,6 +795,22 @@ export class AppService implements OnModuleInit {
         throw new Error(`Account is frozen until ${state.safety.activeFreeze!.frozenUntil}. Please contact support.`);
       }
       
+      // Check if gov ID verification is required
+      const toggleRows = await client.query<{ enabled: boolean }>(
+        "SELECT enabled FROM feature_toggles WHERE name = $1",
+        ["require_gov_id_for_booking"]
+      );
+      const requireGovId = toggleRows.rows[0]?.enabled || false;
+      
+      if (requireGovId && !state.verification.governmentIdVerified) {
+        const statusMsg = state.verification.govIdStatus === "pending_review"
+          ? "Your government ID is being reviewed. You'll be able to book once it's approved."
+          : state.verification.govIdStatus === "rejected"
+          ? `Your ID was rejected: ${state.verification.govIdRejectionReason || "Please resubmit a clear photo."}`
+          : "Please submit your government ID before booking your first date.";
+        throw new Error(statusMsg);
+      }
+      
       // Find existing booking for this match
       const existingBooking = aggregate.bookings.find(b => b.matchId === matchId);
       
@@ -992,6 +1068,52 @@ export class AppService implements OnModuleInit {
       };
     });
 
+    // Fetch pending gov ID submissions
+    const govIdRows = await this.database.query<{
+      id: string;
+      user_id: string;
+      front_image_url: string;
+      back_image_url?: string;
+      id_type: string;
+      review_status: "pending" | "approved" | "rejected";
+      submitted_at: string;
+      phone_number?: string;
+      user_summary?: any;
+    }>(
+      `SELECT g.id, g.user_id, g.front_image_url, g.back_image_url, g.id_type, 
+              g.review_status, g.submitted_at, u.phone_number, us.user_summary
+       FROM gov_id_submissions g
+       JOIN users u ON g.user_id = u.id
+       LEFT JOIN user_states us ON g.user_id = us.user_id
+       WHERE g.review_status = $1
+       ORDER BY g.submitted_at ASC
+       LIMIT 50`,
+      ["pending"]
+    );
+
+    const govIdQueue = govIdRows.rows.map((row) => {
+      const userSummary = row.user_summary as any;
+      return {
+        id: row.id,
+        userId: row.user_id,
+        frontImageUrl: row.front_image_url,
+        backImageUrl: row.back_image_url,
+        idType: row.id_type as "national_id" | "drivers_license" | "passport" | "voters_card",
+        reviewStatus: row.review_status,
+        submittedAt: row.submitted_at,
+        userName: userSummary?.firstName || "Unknown",
+        userPhone: row.phone_number || ""
+      };
+    });
+
+    // Fetch feature toggles
+    const toggleRows = await this.database.query<{
+      name: string;
+      enabled: boolean;
+    }>("SELECT name, enabled FROM feature_toggles");
+    
+    const requireGovIdToggle = toggleRows.rows.find(r => r.name === "require_gov_id_for_booking");
+
     return {
       overview: {
         pendingReports: reports.filter((item) => item.status === "open").length,
@@ -1001,10 +1123,15 @@ export class AppService implements OnModuleInit {
         onboardingCompleted: state.onboarding.completed,
         supportWindow: "16:00-23:00 WAT",
         pendingSelfieReviews: selfieQueue.length,
+        pendingGovIdReviews: govIdQueue.length,
         activeFreezes: state.safety.activeFreeze ? 1 : 0
+      },
+      featureToggles: {
+        requireGovIdForBooking: requireGovIdToggle?.enabled || false
       },
       moderationQueue: reports.filter((item) => item.status === "open" || item.status === "investigating"),
       selfieQueue,
+      govIdQueue,
       venueNetwork: venues,
       bookings,
       verification: state.verification,
@@ -1180,6 +1307,103 @@ export class AppService implements OnModuleInit {
         client
       );
       await this.saveState(userId, state, client);
+    });
+
+    return this.getOpsDashboard(opsUserId);
+  }
+
+  async approveGovId(submissionId: string, opsUserId?: string) {
+    await this.database.withTransaction(async (client) => {
+      // Get submission
+      const row = await client.query<{ user_id: string }>(
+        "SELECT user_id FROM gov_id_submissions WHERE id = $1 AND review_status = $2",
+        [submissionId, "pending"]
+      );
+
+      if (row.rows.length === 0) {
+        return { error: "Submission not found or already reviewed" };
+      }
+
+      const userId = row.rows[0].user_id;
+
+      // Update submission to approved
+      await client.query(
+        `UPDATE gov_id_submissions 
+         SET review_status = $1, reviewed_at = NOW(), reviewed_by = $2 
+         WHERE id = $3`,
+        ["approved", opsUserId || "ops-user", submissionId]
+      );
+
+      // Update user verification status
+      const state = await this.loadState(userId, client);
+      state.verification.governmentIdVerified = true;
+      state.verification.govIdStatus = "approved";
+      await this.pushNotification(
+        userId,
+        state,
+        "✓ Government ID verified",
+        "Your ID has been verified. You can now book dates!",
+        "Update",
+        client
+      );
+      await this.saveState(userId, state, client);
+    });
+
+    return this.getOpsDashboard(opsUserId);
+  }
+
+  async rejectGovId(submissionId: string, reason?: string, opsUserId?: string) {
+    await this.database.withTransaction(async (client) => {
+      // Get submission
+      const row = await client.query<{ user_id: string }>(
+        "SELECT user_id FROM gov_id_submissions WHERE id = $1 AND review_status = $2",
+        [submissionId, "pending"]
+      );
+
+      if (row.rows.length === 0) {
+        return { error: "Submission not found or already reviewed" };
+      }
+
+      const userId = row.rows[0].user_id;
+      const rejectionReason = reason || "ID image quality or document validity could not be verified";
+
+      // Update submission to rejected
+      await client.query(
+        `UPDATE gov_id_submissions 
+         SET review_status = $1, reviewed_at = NOW(), reviewed_by = $2, rejection_reason = $3 
+         WHERE id = $4`,
+        ["rejected", opsUserId || "ops-user", rejectionReason, submissionId]
+      );
+
+      // Update user verification status
+      const state = await this.loadState(userId, client);
+      state.verification.govIdStatus = "rejected";
+      state.verification.govIdRejectionReason = rejectionReason;
+      
+      // Notify user
+      await this.pushNotification(
+        userId,
+        state,
+        "Government ID needs retry",
+        `We couldn't verify your ID: ${rejectionReason}. Please submit a clear photo of a valid government-issued ID.`,
+        "Update",
+        client
+      );
+      await this.saveState(userId, state, client);
+    });
+
+    return this.getOpsDashboard(opsUserId);
+  }
+
+  async setFeatureToggle(name: string, enabled: boolean, opsUserId?: string) {
+    await this.database.withTransaction(async (client) => {
+      await client.query(
+        `INSERT INTO feature_toggles (name, enabled, updated_at, updated_by)
+         VALUES ($1, $2, NOW(), $3)
+         ON CONFLICT (name) DO UPDATE 
+         SET enabled = $2, updated_at = NOW(), updated_by = $3`,
+        [name, enabled, opsUserId || "ops-user"]
+      );
     });
 
     return this.getOpsDashboard(opsUserId);
