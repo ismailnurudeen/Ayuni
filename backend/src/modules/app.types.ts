@@ -9,7 +9,7 @@ export type ShareChannel = "WhatsApp" | "SMS";
 export type NotificationCategory = "Update" | "Booking" | "Cancellation";
 export type RoundReaction = "Accepted" | "Declined";
 export type PaymentMethod = "card" | "bank_transfer" | "ussd";
-export type PaymentStatus = "initiated" | "completed" | "failed";
+export type PaymentStatus = "initiated" | "pending" | "completed" | "failed" | "refunded";
 export type ReportSeverity = "high" | "medium";
 export type ReportStatus = "open" | "resolved";
 
@@ -205,7 +205,11 @@ export type PaymentRecord = {
   amountNgn: number;
   expiresInMinutes: number;
   status: PaymentStatus;
+  paystackReference?: string;
+  paystackAuthUrl?: string;
+  bookingId?: string;
   createdAt: string;
+  updatedAt: string;
 };
 
 export type ProfileMedia = {

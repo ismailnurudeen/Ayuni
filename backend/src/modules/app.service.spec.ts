@@ -5,6 +5,7 @@ import { AuthService } from "./auth.service";
 import { OtpService } from "./otp.service";
 import { TwilioSmsService } from "./sms.service";
 import { MediaService } from "./media.service";
+import { PaystackService } from "./paystack.service";
 import { AppService } from "./app.service";
 
 describe("AppService", () => {
@@ -14,6 +15,7 @@ describe("AppService", () => {
   let otpService: OtpService;
   let smsService: TwilioSmsService;
   let mediaService: MediaService;
+  let paystackService: PaystackService;
   let service: AppService;
 
   beforeEach(async () => {
@@ -28,7 +30,8 @@ describe("AppService", () => {
     otpService = new OtpService();
     smsService = new TwilioSmsService();
     mediaService = new MediaService(databaseService);
-    service = new AppService(databaseService, authService, otpService, smsService, mediaService);
+    paystackService = new PaystackService();
+    service = new AppService(databaseService, authService, otpService, smsService, mediaService, paystackService);
     await service.onModuleInit();
   });
 
@@ -76,7 +79,8 @@ describe("AppService", () => {
     const restartedOtpService = new OtpService();
     const restartedSmsService = new TwilioSmsService();
     const restartedMediaService = new MediaService(restartedDatabaseService);
-    const restartedService = new AppService(restartedDatabaseService, restartedAuthService, restartedOtpService, restartedSmsService, restartedMediaService);
+    const restartedPaystackService = new PaystackService();
+    const restartedService = new AppService(restartedDatabaseService, restartedAuthService, restartedOtpService, restartedSmsService, restartedMediaService, restartedPaystackService);
     await restartedService.onModuleInit();
 
     const bootstrap = await restartedService.getBootstrap("demo-user");
@@ -99,6 +103,9 @@ describe("AppService", () => {
   it("uses NGN 3,500 for persisted token payments", async () => {
     const payment = await service.initiateDateToken("card", "pay-user");
     expect(payment.amountNgn).toBe(3500);
+    expect(payment.paystackReference).toBeDefined();
+    expect(payment.paystackAuthUrl).toBeDefined();
+    expect(payment.status).toBe("initiated");
 
     const rows = await pool.query<{ payment_method: string; status: string }>(
       "SELECT payment_method, status FROM payments WHERE user_id = $1",
@@ -549,7 +556,7 @@ describe("AppService", () => {
       );
 
       // Simulate restart by creating new service instance
-      const newService = new AppService(databaseService, authService, otpService, smsService, mediaService);
+      const newService = new AppService(databaseService, authService, otpService, smsService, mediaService, paystackService);
       const restartedBootstrap = await newService.getBootstrap("booking-user-4");
 
       const booking = restartedBootstrap.bookings.find((b) => b.id === result.bookingId);
@@ -557,6 +564,120 @@ describe("AppService", () => {
       expect(booking!.status).toBe("availability_submitted");
       expect(booking!.matchId).toBe(matchId);
       expect(booking!.availability).toEqual(["Friday evening"]);
+    });
+  });
+
+  describe("Payment flow", () => {
+    it("processes successful payment webhook", async () => {
+      // Create a booking first
+      const bootstrap = await service.getBootstrap("payment-user");
+      const matchId = bootstrap.suggestions[0].id;
+      
+      const availResult = await service.submitAvailability(
+        matchId,
+        ["Saturday evening"],
+        "payment-user"
+      );
+      const bookingId = availResult.bookingId;
+
+      // Initiate payment
+      const payment = await service.initiateDateToken("card", "payment-user", bookingId);
+      expect(payment.status).toBe("initiated");
+      expect(payment.paystackReference).toBeDefined();
+
+      // Simulate webhook success
+      await service.handlePaymentSuccess(
+        payment.paystackReference!,
+        "payment-user",
+        payment.id,
+        bookingId
+      );
+
+      // Verify payment marked as completed
+      const paymentRows = await pool.query(
+        "SELECT payload FROM payments WHERE id = $1",
+        [payment.id]
+      );
+      const updatedPayment = paymentRows.rows[0].payload;
+      expect(updatedPayment.status).toBe("completed");
+
+      // Verify booking marked as confirmed
+      const bookingRows = await pool.query(
+        "SELECT payload FROM bookings WHERE id = $1",
+        [bookingId]
+      );
+      const updatedBooking = bookingRows.rows[0].payload;
+      expect(updatedBooking.status).toBe("confirmed");
+      expect(updatedBooking.bothPaid).toBe(true);
+    });
+
+    it("handles payment failure webhook", async () => {
+      // Initiate payment
+      const payment = await service.initiateDateToken("card", "payment-fail-user");
+      expect(payment.status).toBe("initiated");
+
+      // Simulate webhook failure
+      await service.handlePaymentFailure(
+        payment.paystackReference!,
+        "payment-fail-user",
+        payment.id
+      );
+
+      // Verify payment marked as failed
+      const paymentRows = await pool.query(
+        "SELECT payload FROM payments WHERE id = $1",
+        [payment.id]
+      );
+      const updatedPayment = paymentRows.rows[0].payload;
+      expect(updatedPayment.status).toBe("failed");
+    });
+
+    it("handles duplicate webhook events idempotently", async () => {
+      // Create a booking first
+      const bootstrap = await service.getBootstrap("payment-idempotent-user");
+      const matchId = bootstrap.suggestions[0].id;
+      
+      const availResult = await service.submitAvailability(
+        matchId,
+        ["Sunday afternoon"],
+        "payment-idempotent-user"
+      );
+      const bookingId = availResult.bookingId;
+
+      // Initiate payment
+      const payment = await service.initiateDateToken("card", "payment-idempotent-user", bookingId);
+
+      // Process success webhook first time
+      await service.handlePaymentSuccess(
+        payment.paystackReference!,
+        "payment-idempotent-user",
+        payment.id,
+        bookingId
+      );
+
+      // Process success webhook again (duplicate)
+      await service.handlePaymentSuccess(
+        payment.paystackReference!,
+        "payment-idempotent-user",
+        payment.id,
+        bookingId
+      );
+
+      // Verify payment still completed (not double-processed)
+      const paymentRows = await pool.query(
+        "SELECT payload FROM payments WHERE id = $1",
+        [payment.id]
+      );
+      const updatedPayment = paymentRows.rows[0].payload;
+      expect(updatedPayment.status).toBe("completed");
+
+      // Verify booking still confirmed (no corruption)
+      const bookingRows = await pool.query(
+        "SELECT payload FROM bookings WHERE id = $1",
+        [bookingId]
+      );
+      const updatedBooking = bookingRows.rows[0].payload;
+      expect(updatedBooking.status).toBe("confirmed");
     });
   });
 });

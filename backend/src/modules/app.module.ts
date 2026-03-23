@@ -8,12 +8,14 @@ import { AuthController } from "./auth.controller";
 import { MobileController } from "./mobile.controller";
 import { MediaController } from "./media.controller";
 import { OpsController } from "./ops.controller";
+import { WebhookController } from "./webhook.controller";
 import { AppService } from "./app.service";
 import { AuthService } from "./auth.service";
 import { AuthGuard } from "./auth.guard";
 import { OtpService } from "./otp.service";
 import { TwilioSmsService } from "./sms.service";
 import { MediaService } from "./media.service";
+import { PaystackService } from "./paystack.service";
 import { DatabaseService } from "../database/database.service";
 
 @Module({
@@ -26,8 +28,9 @@ import { DatabaseService } from "../database/database.service";
     VerificationController,
     MatchingController,
     BookingController,
-    SafetyController
+    SafetyController,
+    WebhookController
   ],
-  providers: [DatabaseService, AppService, AuthService, AuthGuard, OtpService, TwilioSmsService, MediaService]
-})
+  providers: [DatabaseService, AppService, AuthService, AuthGuard, OtpService, TwilioSmsService, MediaService, PaystackService]
+})  
 export class AppModule {}

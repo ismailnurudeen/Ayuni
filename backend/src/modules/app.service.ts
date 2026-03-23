@@ -6,6 +6,7 @@ import { AuthService } from "./auth.service";
 import { OtpService } from "./otp.service";
 import { TwilioSmsService } from "./sms.service";
 import { MediaService } from "./media.service";
+import { PaystackService } from "./paystack.service";
 import {
   AccountSettings,
   AppPreferences,
@@ -77,7 +78,8 @@ export class AppService implements OnModuleInit {
     private readonly authService: AuthService,
     private readonly otpService: OtpService,
     private readonly smsService: TwilioSmsService,
-    private readonly mediaService: MediaService
+    private readonly mediaService: MediaService,
+    private readonly paystackService: PaystackService
   ) {}
 
   async onModuleInit() {
@@ -483,25 +485,60 @@ export class AppService implements OnModuleInit {
     });
   }
 
-  async initiateDateToken(paymentMethod: PaymentMethod, rawUserId?: string) {
+  async initiateDateToken(paymentMethod: PaymentMethod, rawUserId?: string, bookingId?: string) {
     const userId = this.resolveUserId(rawUserId);
     await this.ensureUser(userId);
 
     const payment = await this.database.withTransaction(async (client) => {
       const state = await this.loadState(userId, client);
+      
+      // Generate email for Paystack (we don't store email in users table yet)
+      const userEmail = `${userId}@ayuni.app`;
+      
+      // Generate payment reference
+      const paymentId = `pay-${state.nextPaymentId++}`;
+      const reference = `ayuni_${paymentId}_${Date.now()}`;
+      
+      // Determine channels based on payment method
+      let channels: string[] = [];
+      if (paymentMethod === "card") {
+        channels = ["card"];
+      } else if (paymentMethod === "bank_transfer") {
+        channels = ["bank_transfer", "bank"];
+      } else if (paymentMethod === "ussd") {
+        channels = ["ussd"];
+      }
+      
+      // Initialize payment with Paystack
+      const paystackResult = await this.paystackService.initializeTransaction({
+        email: userEmail,
+        amount: 3500,
+        reference: reference,
+        metadata: {
+          userId: userId,
+          paymentId: paymentId,
+          bookingId: bookingId,
+          paymentMethod: paymentMethod
+        },
+        channels: channels
+      });
+      
       const record: PaymentRecord = {
-        id: `pay-${state.nextPaymentId++}`,
+        id: paymentId,
         paymentMethod,
         amountNgn: 3500,
         expiresInMinutes: paymentMethod === "ussd" ? 360 : 30,
         status: "initiated",
-        createdAt: new Date().toISOString()
+        paystackReference: paystackResult.data.reference,
+        paystackAuthUrl: paystackResult.data.authorization_url,
+        bookingId: bookingId,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
       };
+      
       await client.query(
-        `
-          INSERT INTO payments (id, user_id, status, payment_method, payload, created_at, updated_at)
-          VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
-        `,
+        `INSERT INTO payments (id, user_id, status, payment_method, payload, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, NOW(), NOW())`,
         [record.id, userId, record.status, paymentMethod, record]
       );
       await this.saveState(userId, state, client);
@@ -509,6 +546,128 @@ export class AppService implements OnModuleInit {
     });
 
     return payment;
+  }
+
+  async handlePaymentSuccess(reference: string, userId?: string, paymentId?: string, bookingId?: string) {
+    // Make this idempotent - check if payment already processed
+    if (!paymentId || !userId) {
+      console.error("⚠️  Payment success webhook missing userId or paymentId");
+      return;
+    }
+
+    return this.database.withTransaction(async (client) => {
+      // Load payment record
+      const paymentResult = await client.query(
+        "SELECT payload FROM payments WHERE id = $1 AND user_id = $2",
+        [paymentId, userId]
+      );
+
+      if (paymentResult.rows.length === 0) {
+        console.error(`⚠️  Payment ${paymentId} not found for user ${userId}`);
+        return;
+      }
+
+      const payment = paymentResult.rows[0].payload as PaymentRecord;
+
+      // Idempotency check - if already completed, skip
+      if (payment.status === "completed") {
+        console.log(`✓ Payment ${paymentId} already processed, skipping`);
+        return;
+      }
+
+      // Verify with Paystack
+      const verification = await this.paystackService.verifyTransaction(reference);
+      
+      if (!this.paystackService.isPaymentSuccessful(verification.data.status)) {
+        console.error(`⚠️  Payment ${paymentId} verification failed: ${verification.data.status}`);
+        await this.handlePaymentFailure(reference, userId, paymentId);
+        return;
+      }
+
+      // Update payment status
+      payment.status = "completed";
+      payment.updatedAt = new Date().toISOString();
+      await client.query(
+        "UPDATE payments SET status = $1, payload = $2, updated_at = NOW() WHERE id = $3",
+        [payment.status, payment, paymentId]
+      );
+
+      // If linked to booking, transition booking to payment_pending or confirmed
+      if (bookingId) {
+        const bookingResult = await client.query(
+          "SELECT payload FROM bookings WHERE id = $1 AND user_id = $2",
+          [bookingId, userId]
+        );
+
+        if (bookingResult.rows.length > 0) {
+          const booking = bookingResult.rows[0].payload as DateBooking;
+          if (booking.status === "availability_submitted" || booking.status === "payment_pending") {
+            booking.status = "confirmed";
+            booking.bothPaid = true;
+            booking.updatedAt = new Date().toISOString();
+            await client.query(
+              "UPDATE bookings SET payload = $1, updated_at = NOW() WHERE id = $2",
+              [booking, bookingId]
+            );
+          }
+        }
+      }
+
+      // Send notification
+      const state = await this.loadState(userId, client);
+      await this.pushNotification(
+        userId,
+        state,
+        "Payment successful",
+        bookingId ? "Your date is confirmed! Check the Dates tab for details." : "Your date token payment was successful.",
+        "Update",
+        client
+      );
+
+      console.log(`✓ Payment ${paymentId} completed for user ${userId}`);
+    });
+  }
+
+  async handlePaymentFailure(reference: string, userId?: string, paymentId?: string) {
+    if (!paymentId || !userId) {
+      console.error("⚠️  Payment failure webhook missing userId or paymentId");
+      return;
+    }
+
+    return this.database.withTransaction(async (client) => {
+      const paymentResult = await client.query(
+        "SELECT payload FROM payments WHERE id = $1 AND user_id = $2",
+        [paymentId, userId]
+      );
+
+      if (paymentResult.rows.length === 0) {
+        console.error(`⚠️  Payment ${paymentId} not found for user ${userId}`);
+        return;
+      }
+
+      const payment = paymentResult.rows[0].payload as PaymentRecord;
+
+      // Update payment status to failed
+      payment.status = "failed";
+      payment.updatedAt = new Date().toISOString();
+      await client.query(
+        "UPDATE payments SET status = $1, payload = $2, updated_at = NOW() WHERE id = $3",
+        [payment.status, payment, paymentId]
+      );
+
+      // Send notification
+      const state = await this.loadState(userId, client);
+      await this.pushNotification(
+        userId,
+        state,
+        "Payment failed",
+        "Your payment could not be completed. Please try again.",
+        "Update",
+        client
+      );
+
+      console.log(`✗ Payment ${paymentId} failed for user ${userId}`);
+    });
   }
 
   async getBookings(rawUserId?: string) {

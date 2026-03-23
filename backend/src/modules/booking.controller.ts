@@ -9,10 +9,10 @@ export class BookingController {
 
   @Post("payments/date-token/initiate")
   initiateToken(
-    @Body() body: { paymentMethod: "card" | "bank_transfer" | "ussd" },
+    @Body() body: { paymentMethod: "card" | "bank_transfer" | "ussd"; bookingId?: string },
     @UserId() userId: string
   ) {
-    return this.appService.initiateDateToken(body.paymentMethod, userId);
+    return this.appService.initiateDateToken(body.paymentMethod, userId, body.bookingId);
   }
 
   @Get("bookings")

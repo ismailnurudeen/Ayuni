@@ -122,7 +122,7 @@ Match Accepted
 
 ### Notes
 
-- Payment integration scaffolded but not yet connected to Paystack (P0-09)
+- ✅ **Payment integration completed in P0-09** – Paystack webhook now transitions bookings to confirmed status
 - Venue assignment currently uses city-based logic (Lagos → Lekki venues, Abuja → Wuse venues)
 - Date scheduling currently hardcoded to `"2026-03-24T19:00:00+01:00"` – will integrate with availability matcher in future iteration
 - Mobile UI updates deferred (acceptance criteria checked based on backend data flow being ready)
