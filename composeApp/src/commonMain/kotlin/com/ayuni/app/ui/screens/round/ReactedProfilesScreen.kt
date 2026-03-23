@@ -23,6 +23,7 @@ fun ReactedProfilesScreen(
     acceptedProfiles: List<SuggestionProfile>,
     declinedProfiles: List<SuggestionProfile>,
     nextMatchroundLabel: String,
+    countdown: String,
     onBack: () -> Unit,
     onProfileSelected: (SuggestionProfile) -> Unit,
 ) {
@@ -37,7 +38,7 @@ fun ReactedProfilesScreen(
         item {
             SecondaryHeader(
                 title = "24 hour activity",
-                subtitle = nextMatchroundLabel,
+                subtitle = "$nextMatchroundLabel  •  $countdown",
                 onBack = onBack,
             )
         }

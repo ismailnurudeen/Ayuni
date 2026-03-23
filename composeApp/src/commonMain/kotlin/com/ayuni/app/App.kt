@@ -36,7 +36,10 @@ import com.ayuni.app.ui.screens.profile.ProfileHubScreen
 import com.ayuni.app.ui.screens.profile.*
 import com.ayuni.app.ui.screens.profile.ProfileScreen
 import com.ayuni.app.platform.logError
+import kotlinx.datetime.*
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.time.Clock
 
 @Composable
 fun AyuniApp() {
@@ -54,6 +57,44 @@ fun AyuniApp() {
     var onboardingStep by remember { mutableStateOf(OnboardingFlowStep.Welcome) }
     var pendingPhoneNumber by remember { mutableStateOf("") }
     val reactions = remember { mutableStateMapOf<String, RoundReaction>() }
+
+    LaunchedEffect(state.matchround.nextMatchroundLabel) {
+        while (true) {
+            val nowInstant = Clock.System.now()
+            val now = nowInstant.toLocalDateTime(kotlinx.datetime.TimeZone.currentSystemDefault())
+
+            // For now, we assume the next match round is at 8:00 PM (20:00)
+            // Ideally, we'd parse this from state.matchround.nextMatchroundLabel
+            val targetHour = 20
+            val targetMinute = 0
+
+            var targetDateTime = kotlinx.datetime.LocalDateTime(now.year, now.month, now.dayOfMonth, targetHour, targetMinute, 0)
+
+            // If it's already past 8:00 PM, the next round is tomorrow at 8:00 PM
+            if (now.hour >= targetHour && (now.hour > targetHour || now.minute >= targetMinute)) {
+                val tomorrowInstant = nowInstant.plus(1, kotlinx.datetime.DateTimeUnit.DAY, kotlinx.datetime.TimeZone.currentSystemDefault())
+                val tomorrow = tomorrowInstant.toLocalDateTime(kotlinx.datetime.TimeZone.currentSystemDefault())
+                targetDateTime = kotlinx.datetime.LocalDateTime(tomorrow.year, tomorrow.month, tomorrow.dayOfMonth, targetHour, targetMinute, 0)
+            }
+
+            val targetInstant = targetDateTime.toInstant(kotlinx.datetime.TimeZone.currentSystemDefault())
+            val duration = targetInstant - nowInstant
+            val totalSeconds = duration.inWholeSeconds
+
+            if (totalSeconds > 0) {
+                val h = totalSeconds / 3600
+                val m = (totalSeconds % 3600) / 60
+                val s = totalSeconds % 60
+                val newCountdown = "${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}"
+
+                state = state.copy(matchround = state.matchround.copy(countdown = newCountdown))
+            } else {
+                state = state.copy(matchround = state.matchround.copy(countdown = "00:00:00"))
+            }
+
+            delay(1000)
+        }
+    }
 
     fun applyBootstrap(payload: com.ayuni.app.data.api.BootstrapPayload) {
         state = payload.toScreenState()
@@ -221,6 +262,7 @@ fun AyuniApp() {
                                     acceptedProfiles = acceptedProfiles,
                                     declinedProfiles = declinedProfiles,
                                     nextMatchroundLabel = state.matchround.nextMatchroundLabel,
+                                    countdown = state.matchround.countdown,
                                     onBack = { roundScreen = RoundScreen.Active },
                                     onProfileSelected = { selectedDrawerProfileId = it.id }
                                 )
