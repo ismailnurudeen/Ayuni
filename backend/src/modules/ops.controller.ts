@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Post } from "@nestjs/common";
+import { Controller, Get, Headers, Param, Post } from "@nestjs/common";
 import { AppService } from "./app.service";
 
 @Controller("ops")
@@ -6,23 +6,23 @@ export class OpsController {
   constructor(private readonly appService: AppService) {}
 
   @Get("overview")
-  getOpsOverview() {
-    return this.appService.getOpsOverview();
+  getOpsOverview(@Headers("x-user-id") userId?: string) {
+    return this.appService.getOpsOverview(userId);
   }
 
   @Get("dashboard")
-  getDashboard() {
-    return this.appService.getOpsDashboard();
+  getDashboard(@Headers("x-user-id") userId?: string) {
+    return this.appService.getOpsDashboard(userId);
   }
 
   @Post("reports/:id/resolve")
-  resolveReport(@Param("id") id: string) {
-    return this.appService.resolveReport(id);
+  resolveReport(@Param("id") id: string, @Headers("x-user-id") userId?: string) {
+    return this.appService.resolveReport(id, userId);
   }
 
   @Post("bookings/:id/escalate")
-  escalateBooking(@Param("id") id: string) {
-    return this.appService.escalateBooking(id);
+  escalateBooking(@Param("id") id: string, @Headers("x-user-id") userId?: string) {
+    return this.appService.escalateBooking(id, userId);
   }
 
   @Post("venues/:id/toggle")

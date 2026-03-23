@@ -15,8 +15,17 @@
 ```bash
 cd "/Users/elnuru/Documents/New project/backend"
 npm install
+# Optional for durable local data:
+# export DATABASE_URL="postgres://localhost:5432/ayuni"
+npm run migrate
 npm run start:dev
 ```
+
+Notes:
+
+- If `DATABASE_URL` is set, Ayuni uses PostgreSQL and data survives restarts.
+- If `DATABASE_URL` is not set, the backend falls back to `pg-mem` for local/test convenience only.
+- Demo fixtures are enabled automatically outside production. Set `AYUNI_ENABLE_DEMO_FIXTURES=false` to disable them.
 
 Useful endpoints:
 

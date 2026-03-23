@@ -1,4 +1,4 @@
-import { Controller, Get, Post } from "@nestjs/common";
+import { Controller, Get, Headers, Post } from "@nestjs/common";
 import { AppService } from "./app.service";
 
 @Controller("verification")
@@ -6,18 +6,17 @@ export class VerificationController {
   constructor(private readonly appService: AppService) {}
 
   @Get()
-  getVerification() {
-    return this.appService.getVerification();
+  getVerification(@Headers("x-user-id") userId?: string) {
+    return this.appService.getVerification(userId);
   }
 
   @Post("selfie")
-  verifySelfie() {
-    return this.appService.verifySelfie();
+  verifySelfie(@Headers("x-user-id") userId?: string) {
+    return this.appService.verifySelfie(userId);
   }
 
   @Post("id")
-  verifyId() {
-    return this.appService.verifyId();
+  verifyId(@Headers("x-user-id") userId?: string) {
+    return this.appService.verifyId(userId);
   }
 }
-
