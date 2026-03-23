@@ -195,4 +195,11 @@ class AyuniApiClient(
             contentType(ContentType.Application.Json)
             setBody(SelfieSubmissionRequest(imageUrl = imageUrl))
         }.body<SelfieSubmissionResponse>()
+
+    // Safety Reporting
+    suspend fun createSafetyReport(bookingId: String, category: String, details: String): SafetyReportResponse =
+        httpClient.post("$baseUrl/bookings/$bookingId/report") {
+            contentType(ContentType.Application.Json)
+            setBody(SafetyReportRequest(category = category, details = details))
+        }.body<SafetyReportResponse>()
 }

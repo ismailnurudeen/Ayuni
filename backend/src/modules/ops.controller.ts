@@ -20,6 +20,11 @@ export class OpsController {
     return this.appService.resolveReport(id, userId);
   }
 
+  @Post("reports/:id/investigate")
+  investigateReport(@Param("id") id: string, @Headers("x-user-id") userId?: string) {
+    return this.appService.investigateReport(id, userId);
+  }
+
   @Post("bookings/:id/escalate")
   escalateBooking(@Param("id") id: string, @Headers("x-user-id") userId?: string) {
     return this.appService.escalateBooking(id, userId);

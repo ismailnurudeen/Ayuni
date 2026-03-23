@@ -169,3 +169,16 @@ data class SelfieSubmissionResponse(
     val status: String,
     val message: String? = null,
 )
+
+@Serializable
+data class SafetyReportRequest(
+    val category: String, // LateArrival, NoShow, UnsafeBehavior
+    val details: String,
+)
+
+@Serializable
+data class SafetyReportResponse(
+    val success: Boolean,
+    val reportId: String = "",
+    val message: String? = null,
+)

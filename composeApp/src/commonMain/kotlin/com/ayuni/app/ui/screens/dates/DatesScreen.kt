@@ -16,7 +16,12 @@ import com.ayuni.app.ui.components.HeroHeader
 import com.ayuni.app.ui.design.BrandColors
 
 @Composable
-fun DatesScreen(padding: PaddingValues, bookings: List<DateBooking>, onOpenInbox: () -> Unit) {
+fun DatesScreen(
+    padding: PaddingValues,
+    bookings: List<DateBooking>,
+    onOpenInbox: () -> Unit,
+    onReportBooking: (DateBooking) -> Unit
+) {
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -36,7 +41,10 @@ fun DatesScreen(padding: PaddingValues, bookings: List<DateBooking>, onOpenInbox
             )
         }
         items(bookings) { booking ->
-            BookingCard(booking)
+            BookingCard(
+                booking = booking,
+                onReport = { onReportBooking(booking) }
+            )
         }
     }
 }

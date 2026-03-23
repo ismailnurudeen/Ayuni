@@ -29,6 +29,7 @@ import com.ayuni.app.ui.screens.onboarding.PhoneEntryScreen
 import com.ayuni.app.ui.screens.onboarding.WelcomeScreen
 import com.ayuni.app.ui.screens.round.*
 import com.ayuni.app.ui.screens.dates.DatesScreen
+import com.ayuni.app.ui.screens.dates.SafetyReportScreen
 import com.ayuni.app.ui.screens.notifications.NotificationsScreen
 import com.ayuni.app.ui.screens.profile.ProfileHubScreen
 import com.ayuni.app.ui.screens.profile.*
@@ -72,6 +73,7 @@ fun AyuniApp() {
     var selectedDrawerProfileId by remember { mutableStateOf<String?>(null) }
     var onboardingStep by remember { mutableStateOf(OnboardingFlowStep.Welcome) }
     var userMedia by remember { mutableStateOf<List<com.ayuni.app.data.api.ProfileMedia>>(emptyList()) }
+    var reportingBooking by remember { mutableStateOf<com.ayuni.app.domain.DateBooking?>(null) }
 
     // Extract state from holders
     val state by appStateHolder.state
@@ -233,11 +235,26 @@ fun AyuniApp() {
                                 )
                             }
 
-                            AppRoute.Dates -> DatesScreen(
-                                padding = innerPadding,
-                                bookings = state.bookings,
-                                onOpenInbox = { route = AppRoute.Notifications }
-                            )
+                            AppRoute.Dates -> {
+                                if (reportingBooking != null) {
+                                    SafetyReportScreen(
+                                        bookingId = reportingBooking!!.id,
+                                        venueName = reportingBooking!!.venueName,
+                                        counterpartName = reportingBooking!!.counterpartName,
+                                        onSubmitReport = { category, details ->
+                                            repository.createSafetyReport(reportingBooking!!.id, category, details)
+                                        },
+                                        onBack = { reportingBooking = null }
+                                    )
+                                } else {
+                                    DatesScreen(
+                                        padding = innerPadding,
+                                        bookings = state.bookings,
+                                        onOpenInbox = { route = AppRoute.Notifications },
+                                        onReportBooking = { booking -> reportingBooking = booking }
+                                    )
+                                }
+                            }
 
                             AppRoute.Notifications -> NotificationsScreen(
                                 padding = innerPadding,

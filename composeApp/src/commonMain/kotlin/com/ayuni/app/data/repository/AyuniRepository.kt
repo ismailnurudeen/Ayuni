@@ -128,4 +128,16 @@ class AyuniRepository(private val apiClient: AyuniApiClient) {
         }
         response.message ?: "Selfie submitted successfully"
     }
+
+    // Safety Reporting
+    suspend fun createSafetyReport(
+        bookingId: String,
+        category: String,
+        details: String
+    ): Result<Unit> = runCatching {
+        val response = apiClient.createSafetyReport(bookingId, category, details)
+        if (!response.success) {
+            throw Exception(response.message ?: "Failed to submit report")
+        }
+    }
 }
