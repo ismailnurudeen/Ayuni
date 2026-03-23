@@ -96,4 +96,27 @@ class AyuniRepository(private val apiClient: AyuniApiClient) {
     suspend fun updateAppSettings(preferences: AppPreferences): Result<BootstrapPayload> = runCatching {
         apiClient.updateAppSettings(preferences)
     }
+
+    // Media management
+    suspend fun uploadMedia(dataUrl: String, mediaType: String = "image"): Result<String> = runCatching {
+        val response = apiClient.uploadMedia(dataUrl, mediaType)
+        if (!response.success || response.storageUrl == null) {
+            throw Exception(response.error ?: "Failed to upload media")
+        }
+        response.storageUrl
+    }
+
+    suspend fun deleteMedia(mediaId: String): Result<Unit> = runCatching {
+        val response = apiClient.deleteMedia(mediaId)
+        if (!response.success) {
+            throw Exception(response.error ?: "Failed to delete media")
+        }
+    }
+
+    suspend fun reorderMedia(mediaIds: List<String>): Result<Unit> = runCatching {
+        val response = apiClient.reorderMedia(mediaIds)
+        if (!response.success) {
+            throw Exception(response.error ?: "Failed to reorder media")
+        }
+    }
 }

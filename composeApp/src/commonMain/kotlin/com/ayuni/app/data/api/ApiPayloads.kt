@@ -4,6 +4,16 @@ import com.ayuni.app.ui.AppScreenState
 import kotlinx.serialization.Serializable
 
 @Serializable
+data class ProfileMedia(
+    val id: String,
+    val userId: String,
+    val mediaType: String,
+    val storageUrl: String,
+    val displayOrder: Int,
+    val uploadedAt: String,
+)
+
+@Serializable
 data class BootstrapPayload(
     val onboarding: com.ayuni.app.domain.OnboardingState = com.ayuni.app.domain.OnboardingState(
         signupMethod = com.ayuni.app.domain.SignupMethod.Phone,
@@ -22,6 +32,7 @@ data class BootstrapPayload(
     val accountSettings: com.ayuni.app.domain.AccountSettings,
     val appPreferences: com.ayuni.app.domain.AppPreferences,
     val reactions: Map<String, String> = emptyMap(),
+    val media: List<ProfileMedia> = emptyList(),
 ) {
     fun toScreenState(): AppScreenState = AppScreenState(
         onboarding = onboarding,
@@ -93,6 +104,37 @@ data class PhoneOtpVerifyResponse(
     val accessTokenExpiresAt: String? = null,
     val refreshTokenExpiresAt: String? = null,
     val bootstrap: BootstrapPayload? = null,
+    val error: String? = null,
+)
+
+@Serializable
+data class MediaUploadRequest(
+    val dataUrl: String,
+    val mediaType: String,
+)
+
+@Serializable
+data class MediaUploadResponse(
+    val success: Boolean,
+    val mediaId: String? = null,
+    val storageUrl: String? = null,
+    val error: String? = null,
+)
+
+@Serializable
+data class DeleteMediaResponse(
+    val success: Boolean,
+    val error: String? = null,
+)
+
+@Serializable
+data class ReorderMediaRequest(
+    val mediaIds: List<String>,
+)
+
+@Serializable
+data class ReorderMediaResponse(
+    val success: Boolean,
     val error: String? = null,
 )
 

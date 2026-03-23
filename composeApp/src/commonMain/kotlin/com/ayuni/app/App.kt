@@ -53,13 +53,16 @@ fun AyuniApp() {
     val onboardingStateHolder = rememberOnboardingStateHolder(repository, tokenStorage) { bootstrap ->
         appStateHolder.applyBootstrap(bootstrap)
         roundStateHolder.applyReactionsFromBootstrap(bootstrap.reactions)
+        userMedia = bootstrap.media
     }
     val roundStateHolder = rememberRoundStateHolder(repository) { bootstrap ->
         appStateHolder.applyBootstrap(bootstrap)
         roundStateHolder.applyReactionsFromBootstrap(bootstrap.reactions)
+        userMedia = bootstrap.media
     }
     val profileStateHolder = rememberProfileStateHolder(repository) { bootstrap ->
         appStateHolder.applyBootstrap(bootstrap)
+        userMedia = bootstrap.media
     }
 
     // UI-level routing state
@@ -68,6 +71,7 @@ fun AyuniApp() {
     var profileScreen by remember { mutableStateOf(ProfileScreen.Hub) }
     var selectedDrawerProfileId by remember { mutableStateOf<String?>(null) }
     var onboardingStep by remember { mutableStateOf(OnboardingFlowStep.Welcome) }
+    var userMedia by remember { mutableStateOf<List<com.ayuni.app.data.api.ProfileMedia>>(emptyList()) }
 
     // Extract state from holders
     val state by appStateHolder.state
@@ -256,7 +260,17 @@ fun AyuniApp() {
                                     profile = state.editableProfile,
                                     onBack = { profileScreen = ProfileScreen.Hub },
                                     onPreview = { profileScreen = ProfileScreen.ProfilePreview },
-                                    onNavigateToEdit = { profileScreen = it }
+                                    onNavigateToEdit = { profileScreen = it },
+                                    onUploadMedia = { dataUrl ->
+                                        profileStateHolder.uploadMedia(dataUrl)
+                                    },
+                                    onDeleteMedia = { index ->
+                                        // Find the media ID by matching index in the media list
+                                        val media = userMedia.getOrNull(index)
+                                        if (media != null) {
+                                            profileStateHolder.deleteMedia(media.id)
+                                        }
+                                    }
                                 )
 
                                 ProfileScreen.EditBio -> EditBioScreen(

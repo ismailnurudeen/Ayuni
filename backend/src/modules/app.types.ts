@@ -202,6 +202,15 @@ export type PaymentRecord = {
   createdAt: string;
 };
 
+export type ProfileMedia = {
+  id: string;
+  userId: string;
+  mediaType: "image" | "video";
+  storageUrl: string;
+  displayOrder: number;
+  uploadedAt: string;
+};
+
 export type BootstrapPayload = {
   onboarding: OnboardingState;
   verification: VerificationStatus;
@@ -216,6 +225,7 @@ export type BootstrapPayload = {
   accountSettings: AccountSettings;
   appPreferences: AppPreferences;
   reactions: Record<string, RoundReaction>;
+  media: ProfileMedia[];
 };
 
 export type OpsDashboard = {

@@ -21,6 +21,7 @@ import {
   OpsDashboard,
   PaymentMethod,
   PaymentRecord,
+  ProfileMedia,
   RoundReaction,
   SafetyReport,
   SuggestionProfile,
@@ -66,6 +67,7 @@ type Aggregate = {
   reports: SafetyReport[];
   reactions: Record<string, RoundReaction>;
   venues: VenuePartner[];
+  media: ProfileMedia[];
 };
 
 @Injectable()
@@ -823,7 +825,8 @@ export class AppService implements OnModuleInit {
       notifications,
       reports,
       reactions,
-      venues
+      venues,
+      media
     };
   }
 
@@ -845,7 +848,8 @@ export class AppService implements OnModuleInit {
       datingPreferences: aggregate.state.datingPreferences,
       accountSettings: aggregate.state.accountSettings,
       appPreferences: aggregate.state.appPreferences,
-      reactions: aggregate.reactions
+      reactions: aggregate.reactions,
+      media: aggregate.media
     };
   }
 

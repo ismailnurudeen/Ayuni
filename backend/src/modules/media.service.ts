@@ -17,7 +17,7 @@ export type ProfileMedia = {
   mediaType: "image" | "video";
   storageUrl: string;
   displayOrder: number;
-  uploadedAt: Date;
+  uploadedAt: string;
 };
 
 @Injectable()
@@ -244,7 +244,7 @@ export class MediaService {
       mediaType: row.media_type,
       storageUrl: row.storage_url,
       displayOrder: row.display_order,
-      uploadedAt: row.uploaded_at
+      uploadedAt: row.uploaded_at.toISOString()
     }));
   }
 }

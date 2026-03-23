@@ -105,6 +105,58 @@ class ProfileStateHolder(
         }
     }
 
+    fun uploadMedia(dataUrl: String, onSuccess: (String) -> Unit = {}) {
+        scope.launch {
+            _isLoading.value = true
+            _errorMessage.value = null
+
+            repository.uploadMedia(dataUrl)
+                .onSuccess { storageUrl ->
+                    onSuccess(storageUrl)
+                    // Refresh bootstrap to get updated media list
+                    repository.getBootstrap()
+                        .onSuccess { bootstrap ->
+                            onBootstrapReceived(bootstrap)
+                        }
+                        .onFailure { error ->
+                            logError("ProfileStateHolder", "Failed to refresh after upload", error)
+                        }
+                }
+                .onFailure { error ->
+                    logError("ProfileStateHolder", "Failed to upload media", error)
+                    _errorMessage.value = error.message ?: "Could not upload media."
+                }
+
+            _isLoading.value = false
+        }
+    }
+
+    fun deleteMedia(mediaId: String, onSuccess: () -> Unit = {}) {
+        scope.launch {
+            _isLoading.value = true
+            _errorMessage.value = null
+
+            repository.deleteMedia(mediaId)
+                .onSuccess {
+                    // Refresh bootstrap to get updated media list
+                    repository.getBootstrap()
+                        .onSuccess { bootstrap ->
+                            onBootstrapReceived(bootstrap)
+                            onSuccess()
+                        }
+                        .onFailure { error ->
+                            logError("ProfileStateHolder", "Failed to refresh after delete", error)
+                        }
+                }
+                .onFailure { error ->
+                    logError("ProfileStateHolder", "Failed to delete media", error)
+                    _errorMessage.value = error.message ?: "Could not delete media."
+                }
+
+            _isLoading.value = false
+        }
+    }
+
     fun clearError() {
         _errorMessage.value = null
     }

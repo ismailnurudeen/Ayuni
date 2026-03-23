@@ -23,6 +23,7 @@ import com.ayuni.app.ui.components.ActionButton
 import com.ayuni.app.ui.components.DetailPane
 import com.ayuni.app.ui.components.SecondaryHeader
 import com.ayuni.app.ui.design.BrandColors
+import com.ayuni.app.platform.rememberImagePicker
 
 @Composable
 fun EditProfileScreen(
@@ -31,8 +32,14 @@ fun EditProfileScreen(
     onBack: () -> Unit,
     onPreview: () -> Unit,
     onNavigateToEdit: (ProfileScreen) -> Unit,
+    onUploadMedia: (String) -> Unit = {},
+    onDeleteMedia: (Int) -> Unit = {},
 ) {
     var selectedTab by remember { mutableStateOf(0) }
+    
+    val imagePicker = rememberImagePicker { dataUrl ->
+        onUploadMedia(dataUrl)
+    }
 
     Column(
         modifier = Modifier
@@ -92,8 +99,14 @@ fun EditProfileScreen(
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                             userScrollEnabled = false
                         ) {
-                            items(profile.mediaSlots.take(6)) { slot ->
-                                PhotoSlot(slot)
+                            itemsIndexed(profile.mediaSlots.take(6)) { index, slot ->
+                                PhotoSlot(
+                                    imageUrl = slot,
+                                    onUpload = if (slot.isEmpty()) imagePicker else null,
+                                    onDelete = if (slot.isNotEmpty()) {
+                                        { onDeleteMedia(index) }
+                                    } else null
+                                )
                             }
                         }
                     }
@@ -142,27 +155,57 @@ fun EditProfileScreen(
 }
 
 @Composable
-private fun PhotoSlot(label: String) {
+private fun PhotoSlot(
+    imageUrl: String,
+    onUpload: (() -> Unit)? = null,
+    onDelete: (() -> Unit)? = null
+) {
     Box(
         modifier = Modifier
             .aspectRatio(0.8f)
             .clip(RoundedCornerShape(12.dp))
-            .background(BrandColors.PhotoGlow),
+            .background(BrandColors.PhotoGlow)
+            .then(
+                if (onUpload != null) {
+                    Modifier.clickable { onUpload() }
+                } else {
+                    Modifier
+                }
+            ),
         contentAlignment = Alignment.Center
     ) {
-        // Mock image background color
-        Box(modifier = Modifier.fillMaxSize().background(Color.LightGray))
-
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(6.dp)
-                .size(24.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(Color.Black.copy(alpha = 0.6f)),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(Icons.Default.Close, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+        if (imageUrl.isNotEmpty()) {
+            // Show image (mock background for now - would load actual image in production)
+            Box(modifier = Modifier.fillMaxSize().background(Color.LightGray))
+            
+            // Delete button
+            if (onDelete != null) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(6.dp)
+                        .size(24.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color.Black.copy(alpha = 0.6f))
+                        .clickable { onDelete() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = "Delete photo",
+                        tint = Color.White,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+            }
+        } else {
+            // Empty slot with upload button
+            Icon(
+                Icons.Default.Add,
+                contentDescription = "Add photo",
+                tint = BrandColors.Ink,
+                modifier = Modifier.size(32.dp)
+            )
         }
     }
 }

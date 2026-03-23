@@ -170,4 +170,22 @@ class AyuniApiClient(
             contentType(ContentType.Application.Json)
             setBody(preferences)
         }.body<BootstrapPayload>()
+
+    // Media management
+    suspend fun uploadMedia(dataUrl: String, mediaType: String): MediaUploadResponse =
+        httpClient.post("$baseUrl/mobile/media/upload") {
+            contentType(ContentType.Application.Json)
+            setBody(MediaUploadRequest(dataUrl = dataUrl, mediaType = mediaType))
+        }.body<MediaUploadResponse>()
+
+    suspend fun deleteMedia(mediaId: String): DeleteMediaResponse =
+        httpClient.post("$baseUrl/mobile/media/$mediaId") {
+            contentType(ContentType.Application.Json)
+        }.body<DeleteMediaResponse>()
+
+    suspend fun reorderMedia(mediaIds: List<String>): ReorderMediaResponse =
+        httpClient.put("$baseUrl/mobile/media/reorder") {
+            contentType(ContentType.Application.Json)
+            setBody(ReorderMediaRequest(mediaIds = mediaIds))
+        }.body<ReorderMediaResponse>()
 }
