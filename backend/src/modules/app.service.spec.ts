@@ -315,6 +315,53 @@ describe("AppService", () => {
       const genders = [...new Set(bootstrap.suggestions.map((s) => s.gender))];
       expect(genders.length).toBeGreaterThan(1);
     });
+
+    it("excludes already-reacted profiles from new rounds", async () => {
+      const userId = "reaction-filter-user";
+      
+      // Get initial round
+      const initial = await service.getBootstrap(userId);
+      expect(initial.suggestions.length).toBeGreaterThan(0);
+      const firstProfileId = initial.suggestions[0].id;
+
+      // React to first profile
+      await service.respondToMatch(firstProfileId, "accept", userId);
+
+      // Force new round generation by resetting
+      await pool.query("DELETE FROM rounds WHERE user_id = $1", [userId]);
+
+      // Get new round
+      const updated = await service.getBootstrap(userId);
+      
+      // The reacted profile should NOT appear in the new round
+      const profileIds = updated.suggestions.map(s => s.id);
+      expect(profileIds).not.toContain(firstProfileId);
+    });
+
+    it("returns empty round when all profiles have been reacted to", async () => {
+      const userId = "exhausted-pool-user";
+      
+      // Ensure user exists first
+      await service.getBootstrap(userId);
+      
+      // Get all available profiles
+      const allProfiles = await pool.query("SELECT id FROM suggestion_profiles");
+      
+      // React to all of them
+      for (const profile of allProfiles.rows) {
+        await pool.query(
+          "INSERT INTO reactions (user_id, profile_id, reaction) VALUES ($1, $2, 'Declined') ON CONFLICT DO NOTHING",
+          [userId, profile.id]
+        );
+      }
+
+      // Force new round
+      await pool.query("DELETE FROM rounds WHERE user_id = $1", [userId]);
+
+      // Get bootstrap - should have empty suggestions
+      const bootstrap = await service.getBootstrap(userId);
+      expect(bootstrap.suggestions.length).toBe(0);
+    });
   });
 
   describe("Onboarding hardening", () => {

@@ -992,43 +992,67 @@ export class AppService implements OnModuleInit {
       await queryable.query("DELETE FROM rounds WHERE id = $1", [existing.rows[0].id]);
     }
 
+    // Get profiles the user has already reacted to
+    const reactedProfiles = await queryable.query<{ profile_id: string }>(
+      "SELECT profile_id FROM reactions WHERE user_id = $1",
+      [userId]
+    );
+    const reactedProfileIds = reactedProfiles.rows.map(r => r.profile_id);
+
     const preferredCities = state.datingPreferences.dateCities.length > 0 ? state.datingPreferences.dateCities : ["Lagos", "Abuja"];
+    
+    // Query candidates excluding already-reacted profiles
     const result = await queryable.query<{ id: string; payload: SuggestionProfile }>(
       `
         SELECT id, payload
         FROM suggestion_profiles
         WHERE city = ANY($1::text[])
+        ${reactedProfileIds.length > 0 ? 'AND id NOT IN (' + reactedProfileIds.map((_, i) => `$${i + 2}`).join(', ') + ')' : ''}
         ORDER BY created_at ASC
       `,
-      [preferredCities]
+      [preferredCities, ...reactedProfileIds]
     );
 
     let candidates = result.rows;
     const filtered = this.filterByPreferences(candidates.map((r) => r.payload), state.datingPreferences);
     candidates = candidates.filter((r) => filtered.some((f) => f.id === r.payload.id));
 
+    // Fallback 1: Try all cities if preferred cities yield no candidates
     if (candidates.length === 0) {
       const allResult = await queryable.query<{ id: string; payload: SuggestionProfile }>(
-        "SELECT id, payload FROM suggestion_profiles ORDER BY created_at ASC"
+        `
+        SELECT id, payload 
+        FROM suggestion_profiles
+        ${reactedProfileIds.length > 0 ? 'WHERE id NOT IN (' + reactedProfileIds.map((_, i) => `$${i + 1}`).join(', ') + ')' : ''}
+        ORDER BY created_at ASC
+        `,
+        reactedProfileIds
       );
       const allFiltered = this.filterByPreferences(allResult.rows.map((r) => r.payload), state.datingPreferences);
       candidates = allResult.rows.filter((r) => allFiltered.some((f) => f.id === r.payload.id));
     }
 
+    // Fallback 2: If still no candidates after preference filtering, use any unreacted profiles
     if (candidates.length === 0) {
       const fallbackResult = await queryable.query<{ id: string; payload: SuggestionProfile }>(
         `
           SELECT id, payload
           FROM suggestion_profiles
           WHERE city = ANY($1::text[])
+          ${reactedProfileIds.length > 0 ? 'AND id NOT IN (' + reactedProfileIds.map((_, i) => `$${i + 2}`).join(', ') + ')' : ''}
           ORDER BY created_at ASC
           LIMIT 5
         `,
-        [preferredCities]
+        [preferredCities, ...reactedProfileIds]
       );
       candidates = fallbackResult.rowCount
         ? fallbackResult.rows
-        : (await queryable.query<{ id: string; payload: SuggestionProfile }>("SELECT id, payload FROM suggestion_profiles ORDER BY created_at ASC LIMIT 5")).rows;
+        : (await queryable.query<{ id: string; payload: SuggestionProfile }>(
+          `SELECT id, payload FROM suggestion_profiles 
+          ${reactedProfileIds.length > 0 ? 'WHERE id NOT IN (' + reactedProfileIds.map((_, i) => `$${i + 1}`).join(', ') + ')' : ''}
+          ORDER BY created_at ASC LIMIT 5`,
+          reactedProfileIds
+        )).rows;
     }
 
     candidates = candidates.slice(0, 5);
