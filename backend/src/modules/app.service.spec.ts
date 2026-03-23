@@ -7,6 +7,7 @@ import { TwilioSmsService } from "./sms.service";
 import { MediaService } from "./media.service";
 import { PaystackService } from "./paystack.service";
 import { AppService } from "./app.service";
+import { SafetyReport } from "./app.types";
 
 describe("AppService", () => {
   let pool: Pool;
@@ -842,6 +843,268 @@ describe("AppService", () => {
       const bootstrap = await service.getBootstrap("selfie-reject-user");
       const rejectionNotification = bootstrap.notifications.find((n) => n.title.toLowerCase().includes("selfie") && n.title.toLowerCase().includes("retry"));
       expect(rejectionNotification).toBeDefined();
+    });
+  });
+
+  describe("safety reporting lifecycle", () => {
+    it("creates report with open status", async () => {
+      await service.getBootstrap("reporter-user");
+
+      // Create report (booking doesn't need to exist for report creation)
+      await service.createReport({
+        bookingId: "test-booking-1",
+        category: "LateArrival",
+        details: "Counterpart arrived 30 minutes late"
+      }, "reporter-user");
+
+      // Verify report appears in ops dashboard
+      const dashboard = await service.getOpsDashboard("ops-user");
+      const report = dashboard.moderationQueue.find((r) => r.bookingId === "test-booking-1");
+      expect(report).toBeDefined();
+      expect(report!.status).toBe("open");
+      expect(report!.category).toBe("LateArrival");
+      expect(report!.details).toBe("Counterpart arrived 30 minutes late");
+      expect(report!.severity).toBe("medium");
+    });
+
+    it("moves report from open to investigating status", async () => {
+      await service.getBootstrap("investigate-reporter");
+      
+      await service.createReport({
+        bookingId: "test-booking-2",
+        category: "UnsafeBehavior",
+        details: "Felt unsafe during the date"
+      }, "investigate-reporter");
+
+      // Get report ID
+      let dashboard = await service.getOpsDashboard("ops-user");
+      let report = dashboard.moderationQueue.find((r) => r.bookingId === "test-booking-2");
+      expect(report).toBeDefined();
+      expect(report!.status).toBe("open");
+      expect(report!.severity).toBe("high"); // UnsafeBehavior should be high severity
+
+      // Investigate the report
+      await service.investigateReport(report!.id, "ops-user");
+
+      // Verify status changed to investigating
+      dashboard = await service.getOpsDashboard("ops-user");
+      report = dashboard.moderationQueue.find((r) => r.id === report!.id);
+      expect(report).toBeDefined();
+      expect(report!.status).toBe("investigating");
+      expect(report!.investigatedAt).toBeDefined();
+      expect(report!.investigatedBy).toBe("ops-user");
+    });
+
+    it("resolves report with audit trail", async () => {
+      await service.getBootstrap("resolve-reporter");
+      
+      await service.createReport({
+        bookingId: "test-booking-3",
+        category: "NoShow",
+        details: "Counterpart did not show up"
+      }, "resolve-reporter");
+
+      // Get report ID and investigate
+      let dashboard = await service.getOpsDashboard("ops-user");
+      let report = dashboard.moderationQueue.find((r) => r.bookingId === "test-booking-3");
+      expect(report).toBeDefined();
+      const reportId = report!.id;
+      
+      await service.investigateReport(reportId, "ops-user");
+
+      // Verify investigating status
+      dashboard = await service.getOpsDashboard("ops-user");
+      report = dashboard.moderationQueue.find((r) => r.id === reportId);
+      expect(report).toBeDefined();
+      expect(report!.status).toBe("investigating");
+
+      // Resolve the report
+      await service.resolveReport(reportId, "ops-user", "User was refunded");
+
+      // After resolving, report should NOT be in moderation queue
+      // (moderation queue only shows open and investigating reports)
+      dashboard = await service.getOpsDashboard("ops-user");
+      report = dashboard.moderationQueue.find((r) => r.id === reportId);
+      expect(report).toBeUndefined();
+
+      // Verify report was actually resolved by querying directly
+      const allReports = await pool.query<{ payload: SafetyReport }>(
+        "SELECT payload FROM safety_reports WHERE id = $1",
+        [reportId]
+      );
+      expect(allReports.rows.length).toBe(1);
+      const resolvedReport = allReports.rows[0].payload;
+      expect(resolvedReport.status).toBe("resolved");
+      expect(resolvedReport.resolvedAt).toBeDefined();
+      expect(resolvedReport.resolvedBy).toBe("ops-user");
+      expect(resolvedReport.resolutionNotes).toBe("User was refunded");
+    });
+
+    it("assigns high severity to unsafe behavior reports", async () => {
+      await service.getBootstrap("unsafe-reporter");
+      
+      await service.createReport({
+        bookingId: "test-booking-4",
+        category: "UnsafeBehavior",
+        details: "Very concerning behavior"
+      }, "unsafe-reporter");
+
+      const dashboard = await service.getOpsDashboard("ops-user");
+      const report = dashboard.moderationQueue.find((r) => r.bookingId === "test-booking-4");
+      
+      expect(report).toBeDefined();
+      expect(report!.severity).toBe("high");
+    });
+  });
+
+  describe("freeze policy engine", () => {
+    it("issues warning on first incident", async () => {
+      await service.getBootstrap("freeze-user-1");
+      
+      // Record first incident
+      await service.recordIncident("booking-1", "NoShow", "freeze-user-1");
+      
+      // Check state
+      const bootstrap = await service.getBootstrap("freeze-user-1");
+      expect(bootstrap.safety.incidents.length).toBe(1);
+      expect(bootstrap.safety.warnings).toBe(1);
+      expect(bootstrap.safety.tokenLossPenalties).toBe(0);
+      expect(bootstrap.safety.activeFreeze).toBeUndefined();
+      
+      // Verify warning notification
+      const warningNotification = bootstrap.notifications.find(n => n.title.includes("warning"));
+      expect(warningNotification).toBeDefined();
+    });
+
+    it("applies token loss penalty on second incident", async () => {
+      await service.getBootstrap("freeze-user-2");
+      
+      // Record two incidents
+      await service.recordIncident("booking-1", "NoShow", "freeze-user-2");
+      await service.recordIncident("booking-2", "LateCancellation", "freeze-user-2");
+      
+      // Check state
+      const bootstrap = await service.getBootstrap("freeze-user-2");
+      expect(bootstrap.safety.incidents.length).toBe(2);
+      expect(bootstrap.safety.warnings).toBe(1);
+      expect(bootstrap.safety.tokenLossPenalties).toBe(1);
+      expect(bootstrap.safety.activeFreeze).toBeUndefined();
+      
+      // Verify token penalty notification
+      const penaltyNotification = bootstrap.notifications.find(n => n.title.includes("Token penalty"));
+      expect(penaltyNotification).toBeDefined();
+    });
+
+    it("applies 30-day freeze on third incident", async () => {
+      await service.getBootstrap("freeze-user-3");
+      
+      // Record three incidents
+      await service.recordIncident("booking-1", "NoShow", "freeze-user-3");
+      await service.recordIncident("booking-2", "NoShow", "freeze-user-3");
+      await service.recordIncident("booking-3", "LateCancellation", "freeze-user-3");
+      
+      // Check state
+      const bootstrap = await service.getBootstrap("freeze-user-3");
+      expect(bootstrap.safety.incidents.length).toBe(3);
+      expect(bootstrap.safety.activeFreeze).toBeDefined();
+      expect(bootstrap.safety.activeFreeze!.reason).toContain("3 incidents");
+      expect(bootstrap.safety.activeFreeze!.incidentCount).toBe(3);
+      expect(bootstrap.safety.activeFreeze!.canAppeal).toBe(true);
+      
+      // Verify freeze dates (should be approximately 30 days from now)
+      const frozenUntil = new Date(bootstrap.safety.activeFreeze!.frozenUntil);
+      const frozenAt = new Date(bootstrap.safety.activeFreeze!.frozenAt);
+      const daysDiff = Math.floor((frozenUntil.getTime() - frozenAt.getTime()) / (1000 * 60 * 60 * 24));
+      expect(daysDiff).toBeGreaterThanOrEqual(29);
+      expect(daysDiff).toBeLessThanOrEqual(31);
+      
+      // Verify freeze notification
+      const freezeNotification = bootstrap.notifications.find(n => n.title.includes("frozen"));
+      expect(freezeNotification).toBeDefined();
+    });
+
+    it("prevents frozen user from creating bookings", async () => {
+      await service.getBootstrap("frozen-user");
+      
+      // Create freeze
+      await service.recordIncident("booking-1", "NoShow", "frozen-user");
+      await service.recordIncident("booking-2", "NoShow", "frozen-user");
+      await service.recordIncident("booking-3", "NoShow", "frozen-user");
+      
+      // Verify user is frozen
+      const bootstrap = await service.getBootstrap("frozen-user");
+      expect(bootstrap.safety.activeFreeze).toBeDefined();
+      
+      // Try to submit availability (should fail)
+      await expect(
+        service.submitAvailability("sug-1", ["Saturday evening"], "frozen-user")
+      ).rejects.toThrow(/frozen/);
+      
+      // Try to create booking (should fail)
+      await expect(
+        service.createBooking("sug-1", "frozen-user")
+      ).rejects.toThrow(/frozen/);
+    });
+
+    it("only counts incidents from last 90 days", async () => {
+      await service.getBootstrap("expire-user");
+      
+      // Record first incident
+      await service.recordIncident("booking-1", "NoShow", "expire-user");
+      
+      // Get current safety state
+      const currentState = await pool.query(
+        "SELECT safety FROM user_states WHERE user_id = $1",
+        ["expire-user"]
+      );
+      
+      // Add an old incident (>90 days ago) to the incidents array
+      const safety = currentState.rows[0].safety;
+      safety.incidents.push({
+        id: "inc-old",
+        type: "NoShow",
+        bookingId: "old-booking",
+        occurredAt: new Date(Date.now() - 100 * 24 * 60 * 60 * 1000).toISOString() // 100 days ago
+      });
+      
+      // Update the safety state with the modified incidents array
+      await pool.query(
+        "UPDATE user_states SET safety = $1 WHERE user_id = $2",
+        [JSON.stringify(safety), "expire-user"]
+      );
+      
+      // Record second recent incident
+      await service.recordIncident("booking-2", "NoShow", "expire-user");
+      
+      // Should only count the 2 recent incidents, not the old one
+      // So should apply token loss penalty (2nd incident), not freeze
+      const bootstrap = await service.getBootstrap("expire-user");
+      expect(bootstrap.safety.tokenLossPenalties).toBeGreaterThan(0);
+      expect(bootstrap.safety.activeFreeze).toBeUndefined();
+    });
+
+    it("allows ops to lift a freeze", async () => {
+      await service.getBootstrap("lift-freeze-user");
+      
+      // Apply freeze
+      await service.recordIncident("booking-1", "NoShow", "lift-freeze-user");
+      await service.recordIncident("booking-2", "NoShow", "lift-freeze-user");
+      await service.recordIncident("booking-3", "NoShow", "lift-freeze-user");
+      
+      // Verify freeze
+      let bootstrap = await service.getBootstrap("lift-freeze-user");
+      expect(bootstrap.safety.activeFreeze).toBeDefined();
+      
+      // Lift freeze
+      await service.liftFreeze("lift-freeze-user", "Appeal approved");
+      
+      // Verify freeze removed
+      bootstrap = await service.getBootstrap("lift-freeze-user");
+      expect(bootstrap.safety.activeFreeze).toBeUndefined();
+      
+      // Verify notification
+      const liftNotification = bootstrap.notifications.find(n => n.title.includes("freeze lifted"));
+      expect(liftNotification).toBeDefined();
     });
   });
 });

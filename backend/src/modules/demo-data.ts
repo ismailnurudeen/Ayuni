@@ -9,6 +9,8 @@ import {
   OnboardingState,
   SafetyReport,
   SafetyState,
+  SafetyIncident,
+  AccountFreeze,
   SuggestionProfile,
   UserStateRecord,
   UserSummary,
@@ -204,7 +206,10 @@ export const venueFixtures: VenuePartner[] = [
 
 const demoSafety: SafetyState = {
   trustedContactName: "Ada",
-  trustedContactChannel: "WhatsApp"
+  trustedContactChannel: "WhatsApp",
+  incidents: [],
+  warnings: 0,
+  tokenLossPenalties: 0
 };
 
 const demoMatchround: MatchroundState = {
@@ -359,7 +364,8 @@ export function createInitialUserState(useDemoFixtures: boolean): UserStateRecor
     nextNotificationId: 100,
     nextBookingId: 2,
     nextReportId: 103,
-    nextPaymentId: 1
+    nextPaymentId: 1,
+    nextIncidentId: 1
   };
 }
 

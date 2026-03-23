@@ -11,7 +11,7 @@ export type RoundReaction = "Accepted" | "Declined";
 export type PaymentMethod = "card" | "bank_transfer" | "ussd";
 export type PaymentStatus = "initiated" | "pending" | "completed" | "failed" | "refunded";
 export type ReportSeverity = "high" | "medium";
-export type ReportStatus = "open" | "resolved";
+export type ReportStatus = "open" | "investigating" | "resolved";
 
 export type Session = {
   id: string;
@@ -109,6 +109,27 @@ export type DateBooking = {
 export type SafetyState = {
   trustedContactName: string;
   trustedContactChannel: ShareChannel;
+  incidents: SafetyIncident[];
+  activeFreeze?: AccountFreeze;
+  warnings: number;
+  tokenLossPenalties: number;
+};
+
+export type SafetyIncident = {
+  id: string;
+  type: "NoShow" | "LateCancellation";
+  bookingId: string;
+  occurredAt: string;
+  reportId?: string;
+};
+
+export type AccountFreeze = {
+  id: string;
+  reason: string;
+  incidentCount: number;
+  frozenAt: string;
+  frozenUntil: string;
+  canAppeal: boolean;
 };
 
 export type MatchroundState = {
@@ -188,6 +209,11 @@ export type SafetyReport = {
   severity: ReportSeverity;
   status: ReportStatus;
   createdAt: string;
+  investigatedAt?: string;
+  investigatedBy?: string;
+  resolvedAt?: string;
+  resolvedBy?: string;
+  resolutionNotes?: string;
 };
 
 export type VenuePartner = {
@@ -260,6 +286,7 @@ export type OpsDashboard = {
     onboardingCompleted: boolean;
     supportWindow: string;
     pendingSelfieReviews: number;
+    activeFreezes: number;
   };
   moderationQueue: SafetyReport[];
   selfieQueue: SelfieSubmission[];
@@ -269,6 +296,7 @@ export type OpsDashboard = {
   profile: EditableProfile;
   datingPreferences: DatingPreferences;
   accountSettings: AccountSettings;
+  safety: SafetyState;
   notifications: InboxNotification[];
   reactions: Array<{
     profileId: string;
@@ -293,6 +321,7 @@ export type UserStateRecord = {
   nextBookingId: number;
   nextReportId: number;
   nextPaymentId: number;
+  nextIncidentId: number;
 };
 
 export type BasicOnboardingPayload = {

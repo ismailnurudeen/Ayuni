@@ -3,11 +3,16 @@ import { useEffect, useState } from "react";
 type SafetyReport = {
   id: string;
   reporterUserId: string;
-  category: "UnsafeBehavior" | "FalseInfo" | "NoShow" | "VenueIssue" | "Other";
+  category: "UnsafeBehavior" | "FalseInfo" | "NoShow" | "VenueIssue" | "Other" | "LateArrival";
   summary: string;
   severity: "low" | "medium" | "high";
-  status: "open" | "resolved";
+  status: "open" | "investigating" | "resolved";
   createdAt: string;
+  investigatedAt?: string;
+  investigatedBy?: string;
+  resolvedAt?: string;
+  resolvedBy?: string;
+  resolutionNotes?: string;
 };
 
 type VenuePartner = {
@@ -50,6 +55,7 @@ type OpsDashboard = {
     onboardingCompleted: boolean;
     supportWindow: string;
     pendingSelfieReviews: number;
+    activeFreezes: number;
   };
   moderationQueue: SafetyReport[];
   selfieQueue: Array<{
@@ -61,6 +67,27 @@ type OpsDashboard = {
     userName?: string;
     userPhone?: string;
   }>;
+  safety: {
+    trustedContactName: string;
+    trustedContactChannel: string;
+    incidents: Array<{
+      id: string;
+      type: "NoShow" | "LateCancellation";
+      bookingId: string;
+      occurredAt: string;
+      reportId?: string;
+    }>;
+    activeFreeze?: {
+      id: string;
+      reason: string;
+      incidentCount: number;
+      frozenAt: string;
+      frozenUntil: string;
+      canAppeal: boolean;
+    };
+    warnings: number;
+    tokenLossPenalties: number;
+  };
   venueNetwork: VenuePartner[];
   bookings: DateBooking[];
   reactions: Array<{
@@ -120,6 +147,27 @@ export function App() {
       setDashboard(updatedDashboard);
     } catch (err) {
       console.error("Error resolving report:", err);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleInvestigateReport = async (reportId: string) => {
+    try {
+      setActionLoading(reportId);
+      const response = await fetch(`${API_BASE}/ops/reports/${reportId}/investigate`, {
+        method: "POST",
+        headers: {
+          "x-user-id": "demo-user"
+        }
+      });
+      if (!response.ok) {
+        throw new Error("Failed to investigate report");
+      }
+      const updatedDashboard = await response.json();
+      setDashboard(updatedDashboard);
+    } catch (err) {
+      console.error("Error investigating report:", err);
     } finally {
       setActionLoading(null);
     }
@@ -308,7 +356,73 @@ export function App() {
         </article>
 
         <article className="panel">
-          <h2>Moderation queue ({moderationQueue.length})</h2>
+          <h2>Account Safety & Freezes</h2>
+         {dashboard.safety?.activeFreeze ? (
+            <div className="row" style={{ backgroundColor: '#fff3cd', borderRadius: '8px', padding: '1rem' }}>
+              <div>
+                <strong style={{ color: '#dc3545' }}>🔒 Account Frozen</strong>
+                <p style={{ margin: '0.5rem 0' }}><strong>Reason:</strong> {dashboard.safety.activeFreeze.reason}</p>
+                <p style={{ margin: '0.25rem 0' }}><strong>Frozen Until:</strong> {new Date(dashboard.safety.activeFreeze.frozenUntil).toLocaleDateString()}</p>
+                <small>Incident Count: {dashboard.safety.activeFreeze.incidentCount}</small>
+                {dashboard.safety.activeFreeze.canAppeal && (
+                  <small style={{ display: 'block', marginTop: '0.5rem', color: '#856404' }}>
+                    User can appeal this freeze
+                  </small>
+                )}
+              </div>
+              <div>
+                <button
+                  style={{
+                    padding: "0.5rem 1rem",
+                    backgroundColor: "#28a745",
+                    color: "white",
+                    border: "none",
+                    borderRadius: "4px",
+                    cursor: "pointer"
+                  }}
+                >
+                  Lift Freeze
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <p style={{ marginBottom: '1rem' }}><strong>Status:</strong> <span style={{ color: '#28a745' }}>✓ Active</span></p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
+                <div style={{ backgroundColor: '#f8f9fa', padding: '0.75rem', borderRadius: '4px' }}>
+                  <small style={{ color: '#666' }}>Incidents (90 days)</small>
+                  <p style={{ fontSize: '1.5rem', margin: '0.25rem 0', fontWeight: 'bold' }}>
+                    {dashboard.safety?.incidents?.filter(i => {
+                      const ninetyDaysAgo = new Date();
+                      ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+                      return new Date(i.occurredAt) >= ninetyDaysAgo;
+                    }).length || 0}
+                  </p>
+                </div>
+                <div style={{ backgroundColor: '#fff3cd', padding: '0.75rem', borderRadius: '4px' }}>
+                  <small style={{ color: '#666' }}>Warnings</small>
+                  <p style={{ fontSize: '1.5rem', margin: '0.25rem 0', fontWeight: 'bold' }}>{dashboard.safety?.warnings || 0}</p>
+                </div>
+                <div style={{ backgroundColor: '#f8d7da', padding: '0.75rem', borderRadius: '4px' }}>
+                  <small style={{ color: '#666' }}>Token Penalties</small>
+                  <p style={{ fontSize: '1.5rem', margin: '0.25rem 0', fontWeight: 'bold' }}>{dashboard.safety?.tokenLossPenalties || 0}</p>
+                </div>
+              </div>
+              {dashboard.safety?.incidents && dashboard.safety.incidents.length > 0 && (
+                <div style={{ marginTop: '1rem' }}>
+                  <small style={{ fontWeight: 'bold', display: 'block', marginBottom: '0.5rem' }}>Recent Incidents:</small>
+                  {dashboard.safety.incidents.slice(0, 3).map(incident => (
+                    <div key={incident.id} style={{ fontSize: '0.85rem', padding: '0.5rem', backgroundColor: '#f8f9fa', marginBottom: '0.25rem', borderRadius: '4px' }}>
+                      <strong>{incident.type}</strong> • Booking {incident.bookingId} • {new Date(incident.occurredAt).toLocaleDateString()}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </article>
+
+        <article className="panel">
           <h2>Moderation queue ({moderationQueue.length})</h2>
           {moderationQueue.length === 0 ? (
             <p style={{ opacity: 0.6, fontStyle: "italic" }}>No pending reports</p>
@@ -319,21 +433,50 @@ export function App() {
                   <strong>{item.id}</strong>
                   <p>{item.summary}</p>
                   <small>Category: {item.category}</small>
+                  {item.investigatedAt && (
+                    <small style={{ display: 'block', marginTop: '0.25rem', color: '#666' }}>
+                      Investigating since {new Date(item.investigatedAt).toLocaleString()}
+                    </small>
+                  )}
                 </div>
                 <div>
                   <span className={`pill ${item.severity}`}>{item.severity}</span>
-                  <button
-                    onClick={() => handleResolveReport(item.id)}
-                    disabled={actionLoading === item.id}
-                    style={{
-                      marginTop: "0.5rem",
-                      padding: "0.25rem 0.5rem",
-                      fontSize: "0.8rem",
-                      cursor: actionLoading === item.id ? "wait" : "pointer"
-                    }}
-                  >
-                    {actionLoading === item.id ? "Resolving..." : "Resolve"}
-                  </button>
+                  <span className={`pill ${item.status}`} style={{ marginLeft: '0.5rem' }}>{item.status}</span>
+                  <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                    {item.status === "open" && (
+                      <button
+                        onClick={() => handleInvestigateReport(item.id)}
+                        disabled={actionLoading === item.id}
+                        style={{
+                          padding: "0.25rem 0.5rem",
+                          fontSize: "0.8rem",
+                          cursor: actionLoading === item.id ? "wait" : "pointer",
+                          backgroundColor: "#ffc107",
+                          border: "none",
+                          borderRadius: "4px"
+                        }}
+                      >
+                        {actionLoading === item.id ? "Investigating..." : "Investigate"}
+                      </button>
+                    )}
+                    {item.status !== "resolved" && (
+                      <button
+                        onClick={() => handleResolveReport(item.id)}
+                        disabled={actionLoading === item.id}
+                        style={{
+                          padding: "0.25rem 0.5rem",
+                          fontSize: "0.8rem",
+                          cursor: actionLoading === item.id ? "wait" : "pointer",
+                          backgroundColor: "#28a745",
+                          border: "none",
+                          borderRadius: "4px",
+                          color: "white"
+                        }}
+                      >
+                        {actionLoading === item.id ? "Resolving..." : "Resolve"}
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             ))

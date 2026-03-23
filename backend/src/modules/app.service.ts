@@ -25,6 +25,8 @@ import {
   ProfileMedia,
   RoundReaction,
   SafetyReport,
+  SafetyIncident,
+  AccountFreeze,
   SuggestionProfile,
   UserStateRecord,
   VenuePartner,
@@ -53,6 +55,7 @@ type UserStateRow = {
   next_booking_id: number;
   next_report_id: number;
   next_payment_id: number;
+  next_incident_id: number;
 };
 
 type RoundRow = {
@@ -454,6 +457,12 @@ export class AppService implements OnModuleInit {
     return this.database.withTransaction(async (client) => {
       const aggregate = await this.loadAggregate(userId, client);
       const state = aggregate.state;
+      
+      // Check if user is frozen
+      if (this.isFrozen(state)) {
+        throw new Error(`Account is frozen until ${state.safety.activeFreeze!.frozenUntil}. Please contact support.`);
+      }
+      
       const profile = aggregate.suggestions.find((s) => s.id === matchId);
       
       if (!profile) {
@@ -721,6 +730,11 @@ export class AppService implements OnModuleInit {
       const profile = aggregate.suggestions.find((item) => item.id === matchId) ?? aggregate.suggestions[0];
       const state = aggregate.state;
       
+      // Check if user is frozen
+      if (this.isFrozen(state)) {
+        throw new Error(`Account is frozen until ${state.safety.activeFreeze!.frozenUntil}. Please contact support.`);
+      }
+      
       // Find existing booking for this match
       const existingBooking = aggregate.bookings.find(b => b.matchId === matchId);
       
@@ -924,8 +938,25 @@ export class AppService implements OnModuleInit {
   }
 
   async getOpsDashboard(rawUserId?: string): Promise<OpsDashboard> {
-    const aggregate = await this.loadAggregate(this.resolveUserId(rawUserId));
-    const { state, reports, venues, bookings, suggestions, reactions } = aggregate;
+    const userId = this.resolveUserId(rawUserId);
+    await this.ensureUser(userId);
+    
+    // Load user's own state and basic data
+    const state = await this.loadState(userId);
+    
+    // Load ALL reports for ops dashboard (not filtered by user)
+    const reportRows = await this.database.query<{ payload: SafetyReport }>(
+      "SELECT payload FROM safety_reports ORDER BY created_at DESC LIMIT 100"
+    );
+    const reports = reportRows.rows.map((row: { payload: SafetyReport }) => row.payload);
+    
+    // Load other aggregate data for this user
+    const [bookings, suggestions, reactions, venues] = await Promise.all([
+      this.loadBookings(userId),
+      this.loadRoundSuggestions(userId),
+      this.loadReactions(userId),
+      this.loadVenues()
+    ]);
 
     // Fetch pending selfie submissions
     const selfieRows = await this.database.query<{
@@ -969,9 +1000,10 @@ export class AppService implements OnModuleInit {
         totalDeclinedThisRound: Object.values(reactions).filter((item) => item === "Declined").length,
         onboardingCompleted: state.onboarding.completed,
         supportWindow: "16:00-23:00 WAT",
-        pendingSelfieReviews: selfieQueue.length
+        pendingSelfieReviews: selfieQueue.length,
+        activeFreezes: state.safety.activeFreeze ? 1 : 0
       },
-      moderationQueue: reports.filter((item) => item.status === "open"),
+      moderationQueue: reports.filter((item) => item.status === "open" || item.status === "investigating"),
       selfieQueue,
       venueNetwork: venues,
       bookings,
@@ -979,7 +1011,8 @@ export class AppService implements OnModuleInit {
       profile: state.editableProfile,
       datingPreferences: state.datingPreferences,
       accountSettings: state.accountSettings,
-      notifications: aggregate.notifications.slice(0, 8),
+      safety: state.safety,
+      notifications: [],
       reactions: Object.entries(reactions).map(([profileId, reaction]) => {
         const profile = suggestions.find((item) => item.id === profileId);
         return {
@@ -992,23 +1025,52 @@ export class AppService implements OnModuleInit {
     };
   }
 
-  async resolveReport(reportId: string, rawUserId?: string) {
+  async resolveReport(reportId: string, rawUserId?: string, resolutionNotes?: string) {
     const userId = this.resolveUserId(rawUserId);
     await this.ensureUser(userId);
 
     await this.database.withTransaction(async (client) => {
       const row = await client.query<{ payload: SafetyReport }>(
-        "SELECT payload FROM safety_reports WHERE id = $1 AND user_id = $2",
-        [reportId, userId]
+        "SELECT payload FROM safety_reports WHERE id = $1",
+        [reportId]
       );
       
       if (row.rows.length > 0) {
         const report = row.rows[0].payload;
         report.status = "resolved";
+        report.resolvedAt = new Date().toISOString();
+        report.resolvedBy = userId;
+        report.resolutionNotes = resolutionNotes || "Resolved by ops";
         
         await client.query(
-          "UPDATE safety_reports SET status = $1, payload = $2, updated_at = NOW() WHERE id = $3 AND user_id = $4",
-          ["resolved", report, reportId, userId]
+          "UPDATE safety_reports SET status = $1, payload = $2, updated_at = NOW() WHERE id = $3",
+          ["resolved", report, reportId]
+        );
+      }
+    });
+
+    return this.getOpsDashboard(userId);
+  }
+
+  async investigateReport(reportId: string, rawUserId?: string) {
+    const userId = this.resolveUserId(rawUserId);
+    await this.ensureUser(userId);
+
+    await this.database.withTransaction(async (client) => {
+      const row = await client.query<{ payload: SafetyReport }>(
+        "SELECT payload FROM safety_reports WHERE id = $1",
+        [reportId]
+      );
+      
+      if (row.rows.length > 0) {
+        const report = row.rows[0].payload;
+        report.status = "investigating";
+        report.investigatedAt = new Date().toISOString();
+        report.investigatedBy = userId;
+        
+        await client.query(
+          "UPDATE safety_reports SET status = $1, payload = $2, updated_at = NOW() WHERE id = $3",
+          ["investigating", report, reportId]
         );
       }
     });
@@ -1121,6 +1183,146 @@ export class AppService implements OnModuleInit {
     });
 
     return this.getOpsDashboard(opsUserId);
+  }
+
+  // Freeze Policy Engine
+
+  async recordIncident(
+    bookingId: string,
+    incidentType: "NoShow" | "LateCancellation",
+    rawUserId?: string,
+    reportId?: string
+  ) {
+    const userId = this.resolveUserId(rawUserId);
+    await this.ensureUser(userId);
+
+    await this.database.withTransaction(async (client) => {
+      const state = await this.loadState(userId, client);
+      
+      // Create incident record
+      const incident: SafetyIncident = {
+        id: `inc-${state.nextIncidentId || state.safety.incidents.length + 1}`,
+        type: incidentType,
+        bookingId,
+        occurredAt: new Date().toISOString(),
+        reportId
+      };
+
+      state.safety.incidents.push(incident);
+      state.nextIncidentId = (state.nextIncidentId || state.safety.incidents.length) + 1;
+      
+      // Evaluate freeze policy
+      await this.evaluateFreezePolicy(userId, state, client);
+      
+      await this.saveState(userId, state, client);
+    });
+
+    return { recorded: true };
+  }
+
+  private async evaluateFreezePolicy(userId: string, state: UserStateRecord, client: PoolClient) {
+    // Get incidents from last 90 days
+    const ninetyDaysAgo = new Date();
+    ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+    const recentIncidents = state.safety.incidents.filter(
+      (inc) => new Date(inc.occurredAt) >= ninetyDaysAgo
+    );
+
+    const incidentCount = recentIncidents.length;
+
+    // Progressive penalty system:
+    // 1st incident: Warning
+    // 2nd incident: Token loss (₦3,500)
+    // 3rd+ incident: 30-day freeze
+
+    if (incidentCount === 1) {
+      state.safety.warnings += 1;
+      await this.pushNotification(
+        userId,
+        state,
+        "⚠️ First incident warning",
+        "We've recorded a booking issue. Future incidents may result in token loss or account freeze.",
+        "Update",
+        client
+      );
+    } else if (incidentCount === 2) {
+      state.safety.tokenLossPenalties += 1;
+      await this.pushNotification(
+        userId,
+        state,
+        "Token penalty applied",
+        "Due to repeated incidents, you've lost your ₦3,500 booking token. Please maintain good booking practices.",
+        "Update",
+        client
+      );
+    } else if (incidentCount >= 3 && !state.safety.activeFreeze) {
+      // Apply 30-day freeze
+      const freezeStart = new Date();
+      const freezeEnd = new Date();
+      freezeEnd.setDate(freezeEnd.getDate() + 30);
+
+      state.safety.activeFreeze = {
+        id: `freeze-${Date.now()}`,
+        reason: `${incidentCount} incidents in 90 days (no-shows or late cancellations)`,
+        incidentCount,
+        frozenAt: freezeStart.toISOString(),
+        frozenUntil: freezeEnd.toISOString(),
+        canAppeal: true
+      };
+
+      await this.pushNotification(
+        userId,
+        state,
+        "🔒 Account temporarily frozen",
+        `Your account is frozen until ${freezeEnd.toLocaleDateString()} due to ${incidentCount} booking incidents. Contact support to appeal.`,
+        "Cancellation",
+        client
+      );
+    }
+  }
+
+  async liftFreeze(rawUserId?: string, reason?: string) {
+    const userId = this.resolveUserId(rawUserId);
+    await this.ensureUser(userId);
+
+    await this.database.withTransaction(async (client) => {
+      const state = await this.loadState(userId, client);
+      
+      if (state.safety.activeFreeze) {
+        const freezeId = state.safety.activeFreeze.id;
+        state.safety.activeFreeze = undefined;
+        
+        await this.pushNotification(
+          userId,
+          state,
+          "Account freeze lifted",
+          reason || "Your account freeze has been removed by support.",
+          "Update",
+          client
+        );
+
+        await this.saveState(userId, state, client);
+      }
+    });
+
+    return { lifted: true };
+  }
+
+  private isFrozen(state: UserStateRecord): boolean {
+    if (!state.safety.activeFreeze) {
+      return false;
+    }
+
+    const freezeEnd = new Date(state.safety.activeFreeze.frozenUntil);
+    const now = new Date();
+
+    // Auto-expire freeze if time has passed
+    if (now >= freezeEnd) {
+      state.safety.activeFreeze = undefined;
+      return false;
+    }
+
+    return true;
   }
 
   private resolveUserId(rawUserId?: string) {
@@ -1271,7 +1473,8 @@ export class AppService implements OnModuleInit {
                next_notification_id,
                next_booking_id,
                next_report_id,
-               next_payment_id
+               next_payment_id,
+               next_incident_id
         FROM user_states
         WHERE user_id = $1
       `,
@@ -1293,7 +1496,8 @@ export class AppService implements OnModuleInit {
       nextNotificationId: row.next_notification_id,
       nextBookingId: row.next_booking_id,
       nextReportId: row.next_report_id,
-      nextPaymentId: row.next_payment_id
+      nextPaymentId: row.next_payment_id,
+      nextIncidentId: row.next_incident_id || 1
     };
   }
 
@@ -1315,9 +1519,10 @@ export class AppService implements OnModuleInit {
           next_notification_id,
           next_booking_id,
           next_report_id,
-          next_payment_id
+          next_payment_id,
+          next_incident_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
       `,
       [
         userId,
@@ -1334,7 +1539,8 @@ export class AppService implements OnModuleInit {
         state.nextNotificationId,
         state.nextBookingId,
         state.nextReportId,
-        state.nextPaymentId
+        state.nextPaymentId,
+        state.nextIncidentId || 1
       ]
     );
   }
@@ -1357,6 +1563,7 @@ export class AppService implements OnModuleInit {
             next_booking_id = $13,
             next_report_id = $14,
             next_payment_id = $15,
+            next_incident_id = $16,
             updated_at = NOW()
         WHERE user_id = $1
       `,
@@ -1375,7 +1582,8 @@ export class AppService implements OnModuleInit {
         state.nextNotificationId,
         state.nextBookingId,
         state.nextReportId,
-        state.nextPaymentId
+        state.nextPaymentId,
+        state.nextIncidentId || 1
       ]
     );
   }
