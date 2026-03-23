@@ -199,6 +199,19 @@ export type VenuePartner = {
   readiness: "ready" | "waitlist" | "paused";
 };
 
+export type SelfieSubmission = {
+  id: string;
+  userId: string;
+  imageUrl: string;
+  reviewStatus: "pending" | "approved" | "rejected";
+  submittedAt: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+  rejectionReason?: string;
+  userName?: string;
+  userPhone?: string;
+};
+
 export type PaymentRecord = {
   id: string;
   paymentMethod: PaymentMethod;
@@ -246,8 +259,10 @@ export type OpsDashboard = {
     totalDeclinedThisRound: number;
     onboardingCompleted: boolean;
     supportWindow: string;
+    pendingSelfieReviews: number;
   };
   moderationQueue: SafetyReport[];
+  selfieQueue: SelfieSubmission[];
   venueNetwork: VenuePartner[];
   bookings: DateBooking[];
   verification: VerificationStatus;

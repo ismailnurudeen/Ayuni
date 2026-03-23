@@ -119,4 +119,13 @@ class AyuniRepository(private val apiClient: AyuniApiClient) {
             throw Exception(response.error ?: "Failed to reorder media")
         }
     }
+
+    // Verification
+    suspend fun submitSelfie(imageUrl: String): Result<String> = runCatching {
+        val response = apiClient.submitSelfie(imageUrl)
+        if (response.status != "pending") {
+            throw Exception(response.message ?: "Failed to submit selfie")
+        }
+        response.message ?: "Selfie submitted successfully"
+    }
 }

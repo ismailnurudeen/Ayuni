@@ -27,6 +27,7 @@ fun ProfileHubScreen(
     onOpenDatingPreferences: () -> Unit,
     onOpenAccountSettings: () -> Unit,
     onOpenAppSettings: () -> Unit,
+    onOpenSelfieVerification: () -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier
@@ -62,6 +63,10 @@ fun ProfileHubScreen(
                 items = listOf(
                     SettingAction("Edit profile", onOpenEditProfile),
                     SettingAction("Dating preferences", onOpenDatingPreferences),
+                    SettingAction(
+                        if (state.verification.selfieVerified) "Selfie verification ✓" else "Selfie verification",
+                        onOpenSelfieVerification
+                    ),
                     SettingAction("Date wallet", {}),
                     SettingAction("Account settings", onOpenAccountSettings),
                     SettingAction("App settings", onOpenAppSettings),

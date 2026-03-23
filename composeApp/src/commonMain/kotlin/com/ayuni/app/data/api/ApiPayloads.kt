@@ -157,3 +157,15 @@ data class RefreshTokenResponse(
 data class LogoutResponse(
     val success: Boolean,
 )
+
+@Serializable
+data class SelfieSubmissionRequest(
+    val imageUrl: String,
+)
+
+@Serializable
+data class SelfieSubmissionResponse(
+    val submissionId: String = "",
+    val status: String,
+    val message: String? = null,
+)

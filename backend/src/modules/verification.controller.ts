@@ -1,4 +1,4 @@
-import { Controller, Get, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Post, UseGuards } from "@nestjs/common";
 import { AppService } from "./app.service";
 import { AuthGuard, UserId } from "./auth.guard";
 
@@ -13,8 +13,8 @@ export class VerificationController {
   }
 
   @Post("selfie")
-  verifySelfie(@UserId() userId: string) {
-    return this.appService.verifySelfie(userId);
+  submitSelfie(@Body() body: { imageUrl: string }, @UserId() userId: string) {
+    return this.appService.submitSelfie(body.imageUrl, userId);
   }
 
   @Post("id")

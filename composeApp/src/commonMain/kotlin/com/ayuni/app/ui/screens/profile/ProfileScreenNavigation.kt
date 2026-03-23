@@ -7,6 +7,7 @@ enum class ProfileScreen {
     DatingPreferences,
     AccountSettings,
     AppSettings,
+    SelfieVerification,
     // New specific editing screens
     EditBio,
     EditInterests,

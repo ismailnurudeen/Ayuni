@@ -49,8 +49,18 @@ type OpsDashboard = {
     totalDeclinedThisRound: number;
     onboardingCompleted: boolean;
     supportWindow: string;
+    pendingSelfieReviews: number;
   };
   moderationQueue: SafetyReport[];
+  selfieQueue: Array<{
+    id: string;
+    userId: string;
+    imageUrl: string;
+    reviewStatus: "pending" | "approved" | "rejected";
+    submittedAt: string;
+    userName?: string;
+    userPhone?: string;
+  }>;
   venueNetwork: VenuePartner[];
   bookings: DateBooking[];
   reactions: Array<{
@@ -154,6 +164,48 @@ export function App() {
     }
   };
 
+  const handleApproveSelfie = async (submissionId: string) => {
+    try {
+      setActionLoading(submissionId);
+      const response = await fetch(`${API_BASE}/ops/selfies/${submissionId}/approve`, {
+        method: "POST",
+        headers: {
+          "x-user-id": "ops-user"
+        }
+      });
+      if (!response.ok) {
+        throw new Error("Failed to approve selfie");
+      }
+      const updatedDashboard = await response.json();
+      setDashboard(updatedDashboard);
+    } catch (err) {
+      console.error("Error approving selfie:", err);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleRejectSelfie = async (submissionId: string) => {
+    try {
+      setActionLoading(submissionId);
+      const response = await fetch(`${API_BASE}/ops/selfies/${submissionId}/reject`, {
+        method: "POST",
+        headers: {
+          "x-user-id": "ops-user"
+        }
+      });
+      if (!response.ok) {
+        throw new Error("Failed to reject selfie");
+      }
+      const updatedDashboard = await response.json();
+      setDashboard(updatedDashboard);
+    } catch (err) {
+      console.error("Error rejecting selfie:", err);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   if (loading) {
     return (
       <main className="shell">
@@ -189,13 +241,74 @@ export function App() {
           Designed for real-date operations: trust reviews, freeze decisions, venue readiness, and booking escalations.
         </p>
         <div style={{ marginTop: "1rem", fontSize: "0.9rem", opacity: 0.8 }}>
-          <strong>Overview:</strong> {overview.pendingReports} pending reports • {overview.activeVenueCount} active
+          <strong>Overview:</strong> {overview.pendingReports} pending reports • {overview.pendingSelfieReviews || 0} pending selfies • {overview.activeVenueCount} active
           venues • {overview.totalAcceptedThisRound} accepted / {overview.totalDeclinedThisRound} declined this round
         </div>
       </section>
 
       <section className="grid">
         <article className="panel">
+          <h2>Selfie verification ({dashboard.selfieQueue?.length || 0})</h2>
+          {(!dashboard.selfieQueue || dashboard.selfieQueue.length === 0) ? (
+            <p style={{ opacity: 0.6, fontStyle: "italic" }}>No pending selfie reviews</p>
+          ) : (
+            dashboard.selfieQueue.map((submission) => (
+              <div key={submission.id} className="row">
+                <div>
+                  <strong>{submission.userName || "Unknown User"}</strong>
+                  <p style={{ fontSize: "0.85rem", opacity: 0.8 }}>
+                    {submission.userPhone || submission.userId}
+                  </p>
+                  <small>Submitted: {new Date(submission.submittedAt).toLocaleString()}</small>
+                  <br/>
+                  <a 
+                    href={submission.imageUrl} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    style={{ fontSize: "0.85rem", color: "#C17F5F" }}
+                  >
+                    View Image
+                  </a>
+                </div>
+                <div style={{ display: "flex", gap: "0.5rem", flexDirection: "column" }}>
+                  <button
+                    onClick={() => handleApproveSelfie(submission.id)}
+                    disabled={actionLoading === submission.id}
+                    style={{
+                      padding: "0.4rem 0.8rem",
+                      fontSize: "0.85rem",
+                      backgroundColor: "#4CAF50",
+                      color: "white",
+                      border: "none",
+                      borderRadius: "4px",
+                      cursor: actionLoading === submission.id ? "wait" : "pointer"
+                    }}
+                  >
+                    {actionLoading === submission.id ? "..." : "✓ Approve"}
+                  </button>
+                  <button
+                    onClick={() => handleRejectSelfie(submission.id)}
+                    disabled={actionLoading === submission.id}
+                    style={{
+                      padding: "0.4rem 0.8rem",
+                      fontSize: "0.85rem",
+                      backgroundColor: "#f44336",
+                      color: "white",
+                      border: "none",
+                      borderRadius: "4px",
+                      cursor: actionLoading === submission.id ? "wait" : "pointer"
+                    }}
+                  >
+                    {actionLoading === submission.id ? "..." : "✗ Reject"}
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </article>
+
+        <article className="panel">
+          <h2>Moderation queue ({moderationQueue.length})</h2>
           <h2>Moderation queue ({moderationQueue.length})</h2>
           {moderationQueue.length === 0 ? (
             <p style={{ opacity: 0.6, fontStyle: "italic" }}>No pending reports</p>

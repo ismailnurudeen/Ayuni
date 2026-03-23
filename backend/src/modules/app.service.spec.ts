@@ -768,5 +768,80 @@ describe("AppService", () => {
       const finalVenue = finalDashboard.venueNetwork.find((v) => v.id === venue.id);
       expect(finalVenue!.readiness).toBe(initialReadiness);
     });
+
+    it("submits selfie for review", async () => {
+      await service.getBootstrap("selfie-user");
+      
+      // Submit a selfie
+      const result = await service.submitSelfie("data:image/jpeg;base64,fake123", "selfie-user");
+      
+      expect(result.status).toBe("pending");
+      expect(result.submissionId).toBeDefined();
+      expect(result.message).toContain("submitted successfully");
+
+      // Verify selfie appears in ops dashboard
+      const dashboard = await service.getOpsDashboard("selfie-user");
+      expect(dashboard.selfieQueue).toBeDefined();
+      expect(dashboard.selfieQueue.length).toBeGreaterThan(0);
+      expect(dashboard.overview.pendingSelfieReviews).toBeGreaterThan(0);
+
+      const submission = dashboard.selfieQueue.find((s) => s.id === result.submissionId);
+      expect(submission).toBeDefined();
+      expect(submission!.reviewStatus).toBe("pending");
+      expect(submission!.imageUrl).toBe("data:image/jpeg;base64,fake123");
+    });
+
+    it("approves selfie verification", async () => {
+      await service.getBootstrap("selfie-approve-user");
+      
+      // Submit selfie
+      const result = await service.submitSelfie("data:image/jpeg;base64,approved", "selfie-approve-user");
+      const submissionId = result.submissionId;
+
+      // Verify user is not verified yet
+      let verification = await service.getVerification("selfie-approve-user");
+      expect(verification.selfieVerified).toBe(false);
+
+      // Approve the selfie
+      await service.approveSelfie(submissionId, "ops-user");
+
+      // Verify user is now verified
+      verification = await service.getVerification("selfie-approve-user");
+      expect(verification.selfieVerified).toBe(true);
+
+      // Verify submission removed from pending queue
+      const dashboard = await service.getOpsDashboard("selfie-approve-user");
+      const pendingSubmission = dashboard.selfieQueue.find((s) => s.id === submissionId);
+      expect(pendingSubmission).toBeUndefined();
+    });
+
+    it("rejects selfie verification", async () => {
+      await service.getBootstrap("selfie-reject-user");
+      
+      // Submit selfie
+      const result = await service.submitSelfie("data:image/jpeg;base64,rejected", "selfie-reject-user");
+      const submissionId = result.submissionId;
+
+      // Verify user is not verified yet
+      let verification = await service.getVerification("selfie-reject-user");
+      expect(verification.selfieVerified).toBe(false);
+
+      // Reject the selfie
+      await service.rejectSelfie(submissionId, "ops-user");
+
+      // Verify user is still not verified
+      verification = await service.getVerification("selfie-reject-user");
+      expect(verification.selfieVerified).toBe(false);
+
+      // Verify submission removed from pending queue
+      const dashboard = await service.getOpsDashboard("selfie-reject-user");
+      const pendingSubmission = dashboard.selfieQueue.find((s) => s.id === submissionId);
+      expect(pendingSubmission).toBeUndefined();
+
+      // Verify user received notification about rejection
+      const bootstrap = await service.getBootstrap("selfie-reject-user");
+      const rejectionNotification = bootstrap.notifications.find((n) => n.title.toLowerCase().includes("selfie") && n.title.toLowerCase().includes("retry"));
+      expect(rejectionNotification).toBeDefined();
+    });
   });
 });

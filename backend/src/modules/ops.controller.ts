@@ -29,4 +29,14 @@ export class OpsController {
   toggleVenue(@Param("id") id: string) {
     return this.appService.toggleVenue(id);
   }
+
+  @Post("selfies/:id/approve")
+  approveSelfie(@Param("id") id: string, @Headers("x-user-id") opsUserId?: string) {
+    return this.appService.approveSelfie(id, opsUserId);
+  }
+
+  @Post("selfies/:id/reject")
+  rejectSelfie(@Param("id") id: string, @Headers("x-user-id") opsUserId?: string) {
+    return this.appService.rejectSelfie(id, opsUserId);
+  }
 }

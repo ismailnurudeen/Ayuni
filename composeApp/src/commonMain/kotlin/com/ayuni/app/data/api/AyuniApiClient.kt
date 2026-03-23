@@ -188,4 +188,11 @@ class AyuniApiClient(
             contentType(ContentType.Application.Json)
             setBody(ReorderMediaRequest(mediaIds = mediaIds))
         }.body<ReorderMediaResponse>()
+
+    // Verification
+    suspend fun submitSelfie(imageUrl: String): SelfieSubmissionResponse =
+        httpClient.post("$baseUrl/verification/selfie") {
+            contentType(ContentType.Application.Json)
+            setBody(SelfieSubmissionRequest(imageUrl = imageUrl))
+        }.body<SelfieSubmissionResponse>()
 }

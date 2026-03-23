@@ -298,7 +298,43 @@ export class AppService implements OnModuleInit {
     return (await this.loadState(userId)).verification;
   }
 
+  async submitSelfie(imageUrl: string, rawUserId?: string) {
+    const userId = this.resolveUserId(rawUserId);
+    await this.ensureUser(userId);
+
+    return await this.database.withTransaction(async (client) => {
+      const submissionId = this.generateId();
+      
+      // Create selfie submission in pending state
+      await client.query(
+        `INSERT INTO selfie_submissions 
+         (id, user_id, image_url, review_status, submitted_at)
+         VALUES ($1, $2, $3, $4, NOW())`,
+        [submissionId, userId, imageUrl, "pending"]
+      );
+
+      // Notify user
+      const state = await this.loadState(userId, client);
+      await this.pushNotification(
+        userId,
+        state,
+        "Selfie submitted for review",
+        "We'll review your selfie verification shortly. This usually takes a few minutes.",
+        "Update",
+        client
+      );
+      await this.saveState(userId, state, client);
+
+      return {
+        submissionId,
+        status: "pending",
+        message: "Selfie submitted successfully and is awaiting review"
+      };
+    });
+  }
+
   async verifySelfie(rawUserId?: string) {
+    // Legacy method for backward compatibility - auto-approve
     const userId = this.resolveUserId(rawUserId);
     await this.ensureUser(userId);
 
@@ -891,6 +927,40 @@ export class AppService implements OnModuleInit {
     const aggregate = await this.loadAggregate(this.resolveUserId(rawUserId));
     const { state, reports, venues, bookings, suggestions, reactions } = aggregate;
 
+    // Fetch pending selfie submissions
+    const selfieRows = await this.database.query<{
+      id: string;
+      user_id: string;
+      image_url: string;
+      review_status: "pending" | "approved" | "rejected";
+      submitted_at: string;
+      phone_number?: string;
+      user_summary?: any;
+    }>(
+      `SELECT s.id, s.user_id, s.image_url, s.review_status, s.submitted_at,
+              u.phone_number, us.user_summary
+       FROM selfie_submissions s
+       JOIN users u ON s.user_id = u.id
+       LEFT JOIN user_states us ON s.user_id = us.user_id
+       WHERE s.review_status = $1
+       ORDER BY s.submitted_at ASC
+       LIMIT 50`,
+      ["pending"]
+    );
+
+    const selfieQueue = selfieRows.rows.map((row) => {
+      const userSummary = row.user_summary as any;
+      return {
+        id: row.id,
+        userId: row.user_id,
+        imageUrl: row.image_url,
+        reviewStatus: row.review_status,
+        submittedAt: row.submitted_at,
+        userName: userSummary?.firstName || "Unknown",
+        userPhone: row.phone_number || ""
+      };
+    });
+
     return {
       overview: {
         pendingReports: reports.filter((item) => item.status === "open").length,
@@ -898,9 +968,11 @@ export class AppService implements OnModuleInit {
         totalAcceptedThisRound: Object.values(reactions).filter((item) => item === "Accepted").length,
         totalDeclinedThisRound: Object.values(reactions).filter((item) => item === "Declined").length,
         onboardingCompleted: state.onboarding.completed,
-        supportWindow: "16:00-23:00 WAT"
+        supportWindow: "16:00-23:00 WAT",
+        pendingSelfieReviews: selfieQueue.length
       },
       moderationQueue: reports.filter((item) => item.status === "open"),
+      selfieQueue,
       venueNetwork: venues,
       bookings,
       verification: state.verification,
@@ -972,6 +1044,83 @@ export class AppService implements OnModuleInit {
     });
 
     return this.getOpsDashboard();
+  }
+
+  async approveSelfie(submissionId: string, opsUserId?: string) {
+    await this.database.withTransaction(async (client) => {
+      // Get submission
+      const row = await client.query<{ user_id: string }>(
+        "SELECT user_id FROM selfie_submissions WHERE id = $1 AND review_status = $2",
+        [submissionId, "pending"]
+      );
+
+      if (row.rows.length === 0) {
+        return { error: "Submission not found or already reviewed" };
+      }
+
+      const userId = row.rows[0].user_id;
+
+      // Update submission to approved
+      await client.query(
+        `UPDATE selfie_submissions 
+         SET review_status = $1, reviewed_at = NOW(), reviewed_by = $2 
+         WHERE id = $3`,
+        ["approved", opsUserId || "ops-user", submissionId]
+      );
+
+      // Update user verification status
+      const state = await this.loadState(userId, client);
+      state.verification.selfieVerified = true;
+      await this.pushNotification(
+        userId,
+        state,
+        "Selfie verification approved",
+        "Your selfie has been verified. You are one step closer to booking.",
+        "Update",
+        client
+      );
+      await this.saveState(userId, state, client);
+    });
+
+    return this.getOpsDashboard(opsUserId);
+  }
+
+  async rejectSelfie(submissionId: string, opsUserId?: string) {
+    await this.database.withTransaction(async (client) => {
+      // Get submission
+      const row = await client.query<{ user_id: string }>(
+        "SELECT user_id FROM selfie_submissions WHERE id = $1 AND review_status = $2",
+        [submissionId, "pending"]
+      );
+
+      if (row.rows.length === 0) {
+        return { error: "Submission not found or already reviewed" };
+      }
+
+      const userId = row.rows[0].user_id;
+
+      // Update submission to rejected
+      await client.query(
+        `UPDATE selfie_submissions 
+         SET review_status = $1, reviewed_at = NOW(), reviewed_by = $2, rejection_reason = $3 
+         WHERE id = $4`,
+        ["rejected", opsUserId || "ops-user", "Photo quality or liveness check failed", submissionId]
+      );
+
+      // Notify user
+      const state = await this.loadState(userId, client);
+      await this.pushNotification(
+        userId,
+        state,
+        "Selfie verification needs retry",
+        "We couldn't verify your selfie. Please try again with better lighting and make sure your face is clearly visible.",
+        "Update",
+        client
+      );
+      await this.saveState(userId, state, client);
+    });
+
+    return this.getOpsDashboard(opsUserId);
   }
 
   private resolveUserId(rawUserId?: string) {

@@ -253,6 +253,15 @@ fun AyuniApp() {
                                     onOpenDatingPreferences = { profileScreen = ProfileScreen.DatingPreferences },
                                     onOpenAccountSettings = { profileScreen = ProfileScreen.AccountSettings },
                                     onOpenAppSettings = { profileScreen = ProfileScreen.AppSettings },
+                                    onOpenSelfieVerification = { profileScreen = ProfileScreen.SelfieVerification },
+                                )
+
+                                ProfileScreen.SelfieVerification -> SelfieVerificationScreen(
+                                    isVerified = state.verification.selfieVerified,
+                                    onSubmitSelfie = { imageUrl ->
+                                        repository.submitSelfie(imageUrl)
+                                    },
+                                    onBack = { profileScreen = ProfileScreen.Hub }
                                 )
 
                                 ProfileScreen.EditProfile -> EditProfileScreen(
