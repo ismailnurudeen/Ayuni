@@ -454,4 +454,109 @@ describe("AppService", () => {
       expect(bootstrap.onboarding.completed).toBe(false);
     });
   });
+
+  describe("Booking lifecycle", () => {
+    it("creates booking intent when submitting availability", async () => {
+      const bootstrap = await service.getBootstrap("booking-user");
+      expect(bootstrap.suggestions.length).toBeGreaterThan(0);
+      const matchId = bootstrap.suggestions[0].id;
+
+      const result = await service.submitAvailability(
+        matchId,
+        ["Saturday evening", "Sunday afternoon"],
+        "booking-user"
+      );
+
+      expect(result.bookingId).toBeDefined();
+      expect(result.matchId).toBe(matchId);
+      expect(result.availability).toEqual(["Saturday evening", "Sunday afternoon"]);
+      expect(result.paymentRequired).toBe(true);
+
+      // Verify booking persisted with correct status
+      const updatedBootstrap = await service.getBootstrap("booking-user");
+      const booking = updatedBootstrap.bookings.find((b) => b.id === result.bookingId);
+      expect(booking).toBeDefined();
+      expect(booking!.status).toBe("availability_submitted");
+      expect(booking!.matchId).toBe(matchId);
+      expect(booking!.availability).toEqual(["Saturday evening", "Sunday afternoon"]);
+      expect(booking!.createdAt).toBeDefined();
+    });
+
+    it("transitions booking from availability_submitted to confirmed", async () => {
+      const bootstrap = await service.getBootstrap("booking-user-2");
+      expect(bootstrap.suggestions.length).toBeGreaterThan(0);
+      const matchId = bootstrap.suggestions[0].id;
+
+      // First, submit availability
+      const submitResult = await service.submitAvailability(
+        matchId,
+        ["Friday evening"],
+        "booking-user-2"
+      );
+
+      expect(submitResult.bookingId).toBeDefined();
+
+      // Then create booking (simulating payment completion)
+      const bookResult = await service.createBooking(matchId, "booking-user-2");
+
+      expect(bookResult.booking.status).toBe("confirmed");
+      expect(bookResult.booking.matchId).toBe(matchId);
+      expect(bookResult.booking.bothPaid).toBe(true);
+      expect(bookResult.booking.venueName).toBeDefined();
+      expect(bookResult.booking.venueAddress).toBeDefined();
+      expect(bookResult.booking.updatedAt).toBeDefined();
+    });
+
+    it("updates existing booking when resubmitting availability", async () => {
+      const bootstrap = await service.getBootstrap("booking-user-3");
+      expect(bootstrap.suggestions.length).toBeGreaterThan(0);
+      const matchId = bootstrap.suggestions[0].id;
+
+      // Submit availability first time
+      const result1 = await service.submitAvailability(
+        matchId,
+        ["Saturday evening"],
+        "booking-user-3"
+      );
+      const bookingId1 = result1.bookingId;
+
+      // Submit availability again for same match
+      const result2 = await service.submitAvailability(
+        matchId,
+        ["Sunday morning", "Sunday afternoon"],
+        "booking-user-3"
+      );
+
+      // Should return same booking ID and update availability
+      expect(result2.bookingId).toBe(bookingId1);
+      expect(result2.availability).toEqual(["Sunday morning", "Sunday afternoon"]);
+
+      const updatedBootstrap = await service.getBootstrap("booking-user-3");
+      const booking = updatedBootstrap.bookings.find((b) => b.id === bookingId1);
+      expect(booking!.availability).toEqual(["Sunday morning", "Sunday afternoon"]);
+    });
+
+    it("persists booking state across service restarts", async () => {
+      const bootstrap = await service.getBootstrap("booking-user-4");
+      expect(bootstrap.suggestions.length).toBeGreaterThan(0);
+      const matchId = bootstrap.suggestions[0].id;
+
+      // Submit availability
+      const result = await service.submitAvailability(
+        matchId,
+        ["Friday evening"],
+        "booking-user-4"
+      );
+
+      // Simulate restart by creating new service instance
+      const newService = new AppService(databaseService, authService, otpService, smsService, mediaService);
+      const restartedBootstrap = await newService.getBootstrap("booking-user-4");
+
+      const booking = restartedBootstrap.bookings.find((b) => b.id === result.bookingId);
+      expect(booking).toBeDefined();
+      expect(booking!.status).toBe("availability_submitted");
+      expect(booking!.matchId).toBe(matchId);
+      expect(booking!.availability).toEqual(["Friday evening"]);
+    });
+  });
 });

@@ -4,11 +4,12 @@ export type DateType = "Cafe" | "Lounge" | "DessertSpot" | "Brunch" | "CasualRes
 export type BadgeTone = "Trust" | "Intentional" | "Boost";
 export type HighlightTone = "Light" | "Rich";
 export type CheckInStatus = "Pending" | "Confirmed" | "SupportFlagged";
+export type BookingStatus = "intent" | "availability_submitted" | "payment_pending" | "confirmed" | "completed" | "cancelled";
 export type ShareChannel = "WhatsApp" | "SMS";
 export type NotificationCategory = "Update" | "Booking" | "Cancellation";
 export type RoundReaction = "Accepted" | "Declined";
 export type PaymentMethod = "card" | "bank_transfer" | "ussd";
-export type PaymentStatus = "initiated";
+export type PaymentStatus = "initiated" | "completed" | "failed";
 export type ReportSeverity = "high" | "medium";
 export type ReportStatus = "open" | "resolved";
 
@@ -88,6 +89,8 @@ export type SuggestionProfile = {
 
 export type DateBooking = {
   id: string;
+  matchId: string;
+  status: BookingStatus;
   venueName: string;
   city: City;
   dateType: DateType;
@@ -98,6 +101,9 @@ export type DateBooking = {
   bothPaid: boolean;
   counterpartName: string;
   venueAddress: string;
+  availability?: string[];
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type SafetyState = {

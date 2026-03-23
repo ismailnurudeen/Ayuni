@@ -410,12 +410,77 @@ export class AppService implements OnModuleInit {
   }
 
   async submitAvailability(matchId: string, availability: string[], rawUserId?: string) {
-    await this.ensureUser(this.resolveUserId(rawUserId));
-    return {
-      matchId,
-      availability,
-      paymentRequired: true
-    };
+    const userId = this.resolveUserId(rawUserId);
+    await this.ensureUser(userId);
+
+    return this.database.withTransaction(async (client) => {
+      const aggregate = await this.loadAggregate(userId, client);
+      const state = aggregate.state;
+      const profile = aggregate.suggestions.find((s) => s.id === matchId);
+      
+      if (!profile) {
+        throw new Error("Match not found");
+      }
+
+      // Check if booking intent already exists
+      const existingBooking = aggregate.bookings.find(b => b.matchId === matchId);
+      
+      let booking: DateBooking;
+      
+      if (existingBooking) {
+        // Update existing booking with availability
+        existingBooking.availability = availability;
+        existingBooking.status = "availability_submitted";
+        existingBooking.updatedAt = new Date().toISOString();
+        booking = existingBooking;
+        await this.saveBooking(userId, booking, client);
+      } else {
+        // Create new booking intent
+        booking = {
+          id: `book-${state.nextBookingId++}`,
+          matchId: matchId,
+          status: "availability_submitted",
+          venueName: "", // Will be assigned later
+          city: profile.city,
+          dateType: profile.preferredDateType,
+          startAt: "", // Will be scheduled later
+          logisticsChatOpensBeforeHours: 2,
+          checkInStatus: "Pending",
+          tokenAmountNgn: 3500,
+          bothPaid: false,
+          counterpartName: profile.displayName,
+          venueAddress: "",
+          availability: availability,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        
+        await client.query(
+          `INSERT INTO bookings (id, user_id, payload, created_at, updated_at)
+           VALUES ($1, $2, $3, NOW(), NOW())`,
+          [booking.id, userId, booking]
+        );
+        await this.saveState(userId, state, client);
+      }
+
+      await this.pushNotification(
+        userId,
+        state,
+        "Availability submitted",
+        `We received your availability for ${profile.displayName}. Payment is required to confirm.`,
+        "Update",
+        client
+      );
+
+      await this.saveState(userId, state, client);
+
+      return {
+        matchId,
+        bookingId: booking.id,
+        availability,
+        paymentRequired: true
+      };
+    });
   }
 
   async initiateDateToken(paymentMethod: PaymentMethod, rawUserId?: string) {
@@ -460,37 +525,60 @@ export class AppService implements OnModuleInit {
       const aggregate = await this.loadAggregate(userId, client);
       const profile = aggregate.suggestions.find((item) => item.id === matchId) ?? aggregate.suggestions[0];
       const state = aggregate.state;
-      const nextBooking: DateBooking = {
-        id: `book-${state.nextBookingId++}`,
-        venueName: profile.city === "Abuja" ? "Maple Cafe, Wuse II" : "Cocoa Rooms, Lekki",
-        city: profile.city,
-        dateType: profile.preferredDateType,
-        startAt: "2026-03-24T19:00:00+01:00",
-        logisticsChatOpensBeforeHours: 2,
-        checkInStatus: "Pending",
-        tokenAmountNgn: 3500,
-        bothPaid: true,
-        counterpartName: profile.displayName,
-        venueAddress: profile.city === "Abuja" ? "Aminu Kano Crescent, Wuse II" : "Admiralty Way, Lekki"
-      };
+      
+      // Find existing booking for this match
+      const existingBooking = aggregate.bookings.find(b => b.matchId === matchId);
+      
+      let finalBooking: DateBooking;
+      
+      if (existingBooking && (existingBooking.status === "availability_submitted" || existingBooking.status === "payment_pending")) {
+        // Update existing booking to confirmed status with venue assignment
+        existingBooking.status = "confirmed";
+        existingBooking.bothPaid = true; // In P0-09 this will be set after payment webhook
+        existingBooking.venueName = profile.city === "Abuja" ? "Maple Cafe, Wuse II" : "Cocoa Rooms, Lekki";
+        existingBooking.venueAddress = profile.city === "Abuja" ? "Aminu Kano Crescent, Wuse II" : "Admiralty Way, Lekki";
+        existingBooking.startAt = "2026-03-24T19:00:00+01:00"; // This would be scheduled based on availability
+        existingBooking.updatedAt = new Date().toISOString();
+        finalBooking = existingBooking;
+        await this.saveBooking(userId, finalBooking, client);
+      } else {
+        // Create new booking directly (for backward compatibility)
+        const nextBooking: DateBooking = {
+          id: `book-${state.nextBookingId++}`,
+          matchId: matchId,
+          status: "confirmed",
+          venueName: profile.city === "Abuja" ? "Maple Cafe, Wuse II" : "Cocoa Rooms, Lekki",
+          city: profile.city,
+          dateType: profile.preferredDateType,
+          startAt: "2026-03-24T19:00:00+01:00",
+          logisticsChatOpensBeforeHours: 2,
+          checkInStatus: "Pending",
+          tokenAmountNgn: 3500,
+          bothPaid: true,
+          counterpartName: profile.displayName,
+          venueAddress: profile.city === "Abuja" ? "Aminu Kano Crescent, Wuse II" : "Admiralty Way, Lekki",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
 
-      await client.query(
-        `
-          INSERT INTO bookings (id, user_id, payload, created_at, updated_at)
-          VALUES ($1, $2, $3, NOW(), NOW())
-        `,
-        [nextBooking.id, userId, nextBooking]
-      );
+        await client.query(
+          `INSERT INTO bookings (id, user_id, payload, created_at, updated_at)
+           VALUES ($1, $2, $3, NOW(), NOW())`,
+          [nextBooking.id, userId, nextBooking]
+        );
+        finalBooking = nextBooking;
+      }
+      
       await this.pushNotification(
         userId,
         state,
         `Date booked with ${profile.displayName}`,
-        `Your date is scheduled at ${nextBooking.venueName}. Logistics chat opens ${nextBooking.logisticsChatOpensBeforeHours} hours before.`,
+        `Your date is scheduled at ${finalBooking.venueName}. Logistics chat opens ${finalBooking.logisticsChatOpensBeforeHours} hours before.`,
         "Booking",
         client
       );
       await this.saveState(userId, state, client);
-      return nextBooking;
+      return finalBooking;
     });
 
     return {

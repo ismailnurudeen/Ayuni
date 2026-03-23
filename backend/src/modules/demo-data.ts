@@ -281,6 +281,8 @@ const demoAppPreferences: AppPreferences = {
 export const demoBookings: DateBooking[] = [
   {
     id: "book-1",
+    matchId: "sug-1",
+    status: "confirmed",
     venueName: "The Lobby, Victoria Island",
     city: "Lagos",
     dateType: "HotelLobby",
@@ -290,7 +292,10 @@ export const demoBookings: DateBooking[] = [
     tokenAmountNgn: 3500,
     bothPaid: true,
     counterpartName: "Amaka",
-    venueAddress: "Adetokunbo Ademola, Victoria Island"
+    venueAddress: "Adetokunbo Ademola, Victoria Island",
+    availability: ["Saturday evening", "Sunday afternoon"],
+    createdAt: "2026-03-20T10:00:00+01:00",
+    updatedAt: "2026-03-20T10:30:00+01:00"
   }
 ];
 
