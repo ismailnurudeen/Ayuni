@@ -74,7 +74,10 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       `);
     }
 
-    const migrationsDir = path.join(process.cwd(), "migrations");
+    // Use __dirname so the path resolves correctly regardless of process.cwd()
+    // In dev: src/database/ -> ../../migrations
+    // In prod: dist/database/ -> ../../migrations
+    const migrationsDir = path.join(__dirname, "../../migrations");
     const files = (await fs.readdir(migrationsDir)).filter((entry) => entry.endsWith(".sql")).sort();
     const appliedRows = await target.query<{ name: string }>("SELECT name FROM schema_migrations");
     const applied = new Set(appliedRows.rows.map((row) => row.name));
