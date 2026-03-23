@@ -312,4 +312,95 @@ describe("AppService", () => {
       expect(genders.length).toBeGreaterThan(1);
     });
   });
+
+  describe("Onboarding hardening", () => {
+    it("rejects users under 18", async () => {
+      const today = new Date();
+      const under18BirthDate = `${today.getFullYear() - 17}-01-01`;
+
+      await expect(
+        service.completeBasicOnboarding(
+          {
+            firstName: "Minor",
+            birthDate: under18BirthDate,
+            genderIdentity: "Woman",
+            interestedIn: "Men",
+            city: "Lagos",
+            acceptedTerms: true
+          },
+          "minor-user"
+        )
+      ).rejects.toThrow("You must be 18 or older to use Ayuni");
+    });
+
+    it("accepts users exactly 18 years old", async () => {
+      const today = new Date();
+      const exactly18BirthDate = `${today.getFullYear() - 18}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+
+      await service.completeBasicOnboarding(
+        {
+          firstName: "JustEighteen",
+          birthDate: exactly18BirthDate,
+          genderIdentity: "Woman",
+          interestedIn: "Men",
+          city: "Lagos",
+          acceptedTerms: true
+        },
+        "eighteen-user"
+      );
+
+      const bootstrap = await service.getBootstrap("eighteen-user");
+      expect(bootstrap.onboarding.completed).toBe(true);
+    });
+
+    it("rejects when terms are not accepted", async () => {
+      await expect(
+        service.completeBasicOnboarding(
+          {
+            firstName: "NoTerms",
+            birthDate: "1990-01-01",
+            genderIdentity: "Woman",
+            interestedIn: "Men",
+            city: "Lagos",
+            acceptedTerms: false
+          },
+          "no-terms-user"
+        )
+      ).rejects.toThrow("You must accept the terms and conditions to continue");
+    });
+
+    it("records terms acceptance in database", async () => {
+      await service.completeBasicOnboarding(
+        {
+          firstName: "WithTerms",
+          birthDate: "1995-06-15",
+          genderIdentity: "Man",
+          interestedIn: "Women",
+          city: "Abuja",
+          acceptedTerms: true
+        },
+        "terms-user"
+      );
+
+      const result = await pool.query(
+        "SELECT * FROM terms_acceptances WHERE user_id = $1",
+        ["terms-user"]
+      );
+
+      expect(result.rows.length).toBe(1);
+      expect(result.rows[0].terms_version).toBe("1.0");
+      expect(result.rows[0].privacy_version).toBe("1.0");
+      expect(result.rows[0].accepted_at).toBeDefined();
+    });
+
+    it("preserves onboarding step for resume", async () => {
+      // User in OTP verification step
+      await service.requestPhoneOtp("+2348055555555");
+      
+      const bootstrap = await service.getBootstrap("demo-user");
+      expect(bootstrap.onboarding.step).toBe("OtpVerification");
+      expect(bootstrap.onboarding.phoneNumber).toBe("+2348055555555");
+      expect(bootstrap.onboarding.completed).toBe(false);
+    });
+  });
 });

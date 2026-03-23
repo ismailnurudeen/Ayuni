@@ -4,6 +4,7 @@
         "npm test": true,
         "timeout": true,
         "true": true,
-        "npm install": true
+        "npm install": true,
+        "npm run build": true
     }
 }

@@ -205,11 +205,25 @@ export class AppService implements OnModuleInit {
     await this.ensureUser(userId);
 
     if (!body.acceptedTerms) {
-      return this.getBootstrap(userId);
+      throw new Error("You must accept the terms and conditions to continue");
+    }
+
+    // Validate age (must be 18+)
+    const age = this.calculateAge(body.birthDate);
+    if (age < 18) {
+      throw new Error("You must be 18 or older to use Ayuni");
     }
 
     await this.database.withTransaction(async (client) => {
       const state = await this.loadState(userId, client);
+      
+      // Record terms acceptance
+      await client.query(
+        `INSERT INTO terms_acceptances (id, user_id, accepted_at, terms_version, privacy_version)
+         VALUES ($1, $2, NOW(), $3, $4)`,
+        [this.generateId(), userId, "1.0", "1.0"]
+      );
+
       state.userSummary.firstName = body.firstName;
       state.userSummary.completionLabel = "Profile started";
       state.accountSettings = {
@@ -246,6 +260,30 @@ export class AppService implements OnModuleInit {
     });
 
     return this.getBootstrap(userId);
+  }
+
+  /**
+   * Calculate age from birth date string (YYYY-MM-DD format)
+   */
+  private calculateAge(birthDate: string): number {
+    const birth = new Date(birthDate);
+    const today = new Date();
+    let age = today.getFullYear() - birth.getFullYear();
+    const monthDiff = today.getMonth() - birth.getMonth();
+    
+    // Adjust if birthday hasn't occurred yet this year
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
+      age--;
+    }
+    
+    return age;
+  }
+
+  /**
+   * Generate a unique ID for database records
+   */
+  private generateId(): string {
+    return `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
   }
 
   async getVerification(rawUserId?: string): Promise<VerificationStatus> {

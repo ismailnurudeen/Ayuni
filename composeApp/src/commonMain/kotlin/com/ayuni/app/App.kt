@@ -85,6 +85,11 @@ fun AyuniApp() {
         }
     }
 
+    // Restore phone number for onboarding resume
+    LaunchedEffect(state.onboarding.phoneNumber) {
+        onboardingStateHolder.restorePendingPhone(state.onboarding.phoneNumber)
+    }
+
     // Countdown timer logic (could be moved to a dedicated state holder later)
     LaunchedEffect(state.matchround.nextMatchroundLabel) {
         while (true) {

@@ -107,6 +107,15 @@ class OnboardingStateHolder(
     fun clearError() {
         _errorMessage.value = null
     }
+
+    /**
+     * Restore pending phone number for onboarding resume
+     */
+    fun restorePendingPhone(phoneNumber: String) {
+        if (phoneNumber.isNotEmpty()) {
+            _pendingPhoneNumber.value = phoneNumber
+        }
+    }
 }
 
 @Composable
