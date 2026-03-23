@@ -15,13 +15,37 @@ import com.ayuni.app.domain.EditableProfile
 class AyuniRepository(private val apiClient: AyuniApiClient) {
 
     // Auth and Onboarding
-    suspend fun requestPhoneOtp(phoneNumber: String): Result<Unit> = runCatching {
-        apiClient.requestPhoneOtp(phoneNumber)
-        Unit
+    suspend fun requestPhoneOtp(phoneNumber: String): Result<Int> = runCatching {
+        val response = apiClient.requestPhoneOtp(phoneNumber)
+        
+        if (!response.otpSent) {
+            val errorMessage = when (response.error) {
+                "rate_limit" -> "Please wait ${response.retryAfterSeconds} seconds before requesting another code."
+                "blocked" -> "Too many requests. Please try again later."
+                "invalid_phone" -> "Please enter a valid Nigerian phone number."
+                else -> "Could not send verification code. Please try again."
+            }
+            throw Exception(errorMessage)
+        }
+        
+        response.retryAfterSeconds
     }
 
     suspend fun verifyPhoneOtp(phoneNumber: String, code: String): Result<BootstrapPayload> = runCatching {
-        apiClient.verifyPhoneOtp(phoneNumber, code)
+        val response = apiClient.verifyPhoneOtp(phoneNumber, code)
+        
+        if (!response.verified) {
+            val errorMessage = when (response.error) {
+                "invalid_code" -> "Incorrect verification code. Please try again."
+                "expired" -> "This code has expired. Please request a new one."
+                "max_attempts" -> "Too many incorrect attempts. Please request a new code."
+                "not_found" -> "No verification code found. Please request a new one."
+                else -> "Verification failed. Please try again."
+            }
+            throw Exception(errorMessage)
+        }
+        
+        response.bootstrap ?: throw Exception("Verification successful but no data received")
     }
 
     suspend fun completeBasicOnboarding(

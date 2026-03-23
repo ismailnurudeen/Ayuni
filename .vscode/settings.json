@@ -3,6 +3,7 @@
         "./gradlew": true,
         "npm test": true,
         "timeout": true,
-        "true": true
+        "true": true,
+        "npm install": true
     }
 }

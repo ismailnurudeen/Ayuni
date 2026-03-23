@@ -3,6 +3,8 @@ import { PoolClient } from "pg";
 import { QueryResult, QueryResultRow } from "pg";
 import { DatabaseService } from "../database/database.service";
 import { AuthService } from "./auth.service";
+import { OtpService } from "./otp.service";
+import { TwilioSmsService } from "./sms.service";
 import {
   AccountSettings,
   AppPreferences,
@@ -67,11 +69,11 @@ type Aggregate = {
 
 @Injectable()
 export class AppService implements OnModuleInit {
-  private readonly testOtpCode = "123456";
-
   constructor(
     private readonly database: DatabaseService,
-    private readonly authService: AuthService
+    private readonly authService: AuthService,
+    private readonly otpService: OtpService,
+    private readonly smsService: TwilioSmsService
   ) {}
 
   async onModuleInit() {
@@ -99,23 +101,51 @@ export class AppService implements OnModuleInit {
     const userId = this.resolveUserId();
     await this.ensureUser(userId);
 
-    await this.database.withTransaction(async (client) => {
+    const result = await this.database.withTransaction(async (client) => {
+      // Request OTP through OTP service
+      const otpResult = await this.otpService.requestOtp(
+        phoneNumber,
+        client,
+        async (phone: string, code: string) => {
+          await this.smsService.sendOtp(phone, code);
+        }
+      );
+
+      if (!otpResult.success) {
+        return otpResult;
+      }
+
+      // Update user state with pending phone number
       const state = await this.loadState(userId, client);
+      const normalizedPhone = this.otpService.normalizeNigerianPhone(phoneNumber);
       state.onboarding = {
         ...state.onboarding,
         step: "OtpVerification",
-        phoneNumber
+        phoneNumber: normalizedPhone
       };
-      state.pendingPhoneNumber = phoneNumber;
+      state.pendingPhoneNumber = normalizedPhone;
       await this.saveState(userId, state, client);
+
+      return otpResult;
     });
 
+    if (!result.success) {
+      // Return error information
+      return {
+        phoneNumber,
+        otpSent: false,
+        error: result.reason,
+        retryAfterSeconds: result.retryAfterSeconds,
+        blockedUntil: result.blockedUntil
+      };
+    }
+
     return {
-      phoneNumber,
+      phoneNumber: this.otpService.normalizeNigerianPhone(phoneNumber),
       otpSent: true,
       deliveryChannel: "SMS",
       country: "NG",
-      retryAfterSeconds: 30
+      retryAfterSeconds: result.retryAfterSeconds
     };
   }
 
@@ -125,34 +155,40 @@ export class AppService implements OnModuleInit {
 
     const result = await this.database.withTransaction(async (client) => {
       const state = await this.loadState(userId, client);
-      const success = phoneNumber === state.pendingPhoneNumber && code === this.testOtpCode;
+      
+      // Verify OTP through OTP service
+      const verificationResult = await this.otpService.verifyOtp(phoneNumber, code, client);
 
-      if (success) {
-        state.verification.phoneVerified = true;
-        state.accountSettings = {
-          ...state.accountSettings,
-          phoneNumber
-        };
-        state.onboarding = {
-          ...state.onboarding,
-          step: "BasicProfile",
-          phoneNumber
-        };
-        state.pendingPhoneNumber = "";
-        await client.query("UPDATE users SET phone_number = $2, updated_at = NOW() WHERE id = $1", [userId, phoneNumber]);
-        await this.saveState(userId, state, client);
-
-        // Create authenticated session and return tokens
-        const tokens = await this.authService.createSession(userId, deviceInfo, client);
-        return { success: true, tokens };
+      if (!verificationResult.success) {
+        return { success: false, reason: verificationResult.reason, tokens: null };
       }
 
-      return { success: false, tokens: null };
+      // OTP verified successfully
+      const normalizedPhone = this.otpService.normalizeNigerianPhone(phoneNumber);
+      
+      state.verification.phoneVerified = true;
+      state.accountSettings = {
+        ...state.accountSettings,
+        phoneNumber: normalizedPhone
+      };
+      state.onboarding = {
+        ...state.onboarding,
+        step: "BasicProfile",
+        phoneNumber: normalizedPhone
+      };
+      state.pendingPhoneNumber = "";
+      await client.query("UPDATE users SET phone_number = $2, updated_at = NOW() WHERE id = $1", [userId, normalizedPhone]);
+      await this.saveState(userId, state, client);
+
+      // Create authenticated session and return tokens
+      const tokens = await this.authService.createSession(userId, deviceInfo, client);
+      return { success: true, tokens };
     });
 
     if (!result.success) {
       return {
         verified: false,
+        error: result.reason,
         bootstrap: await this.getBootstrap(userId)
       };
     }

@@ -10,6 +10,8 @@ import { OpsController } from "./ops.controller";
 import { AppService } from "./app.service";
 import { AuthService } from "./auth.service";
 import { AuthGuard } from "./auth.guard";
+import { OtpService } from "./otp.service";
+import { TwilioSmsService } from "./sms.service";
 import { DatabaseService } from "../database/database.service";
 
 @Module({
@@ -23,6 +25,6 @@ import { DatabaseService } from "../database/database.service";
     BookingController,
     SafetyController
   ],
-  providers: [DatabaseService, AppService, AuthService, AuthGuard]
+  providers: [DatabaseService, AppService, AuthService, AuthGuard, OtpService, TwilioSmsService]
 })
 export class AppModule {}

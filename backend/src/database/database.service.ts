@@ -1,4 +1,4 @@
-import { Injectable, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
+import { Injectable, OnModuleDestroy, OnModuleInit, Optional, Inject } from "@nestjs/common";
 import { promises as fs } from "fs";
 import * as path from "path";
 import { Pool, PoolClient, QueryResultRow } from "pg";
@@ -11,7 +11,7 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   private pool!: Pool;
   private mode: "postgres" | "pg-mem" = "pg-mem";
 
-  constructor(config?: { pool: Pool }) {
+  constructor(@Optional() @Inject("DATABASE_CONFIG") config?: { pool: Pool }) {
     if (config?.pool) {
       this.pool = config.pool;
     }

@@ -78,9 +78,11 @@ data class BasicOnboardingRequest(
 data class PhoneOtpResponse(
     val phoneNumber: String,
     val otpSent: Boolean,
-    val deliveryChannel: String,
-    val country: String,
+    val deliveryChannel: String = "SMS",
+    val country: String = "NG",
     val retryAfterSeconds: Int = 0,
+    val error: String? = null,
+    val blockedUntil: String? = null,
 )
 
 @Serializable
@@ -91,6 +93,7 @@ data class PhoneOtpVerifyResponse(
     val accessTokenExpiresAt: String? = null,
     val refreshTokenExpiresAt: String? = null,
     val bootstrap: BootstrapPayload? = null,
+    val error: String? = null,
 )
 
 @Serializable

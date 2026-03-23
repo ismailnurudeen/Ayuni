@@ -31,14 +31,18 @@ class OnboardingStateHolder(
     private val _pendingPhoneNumber = mutableStateOf("")
     val pendingPhoneNumber: State<String> = _pendingPhoneNumber
 
+    private val _resendCooldownSeconds = mutableStateOf(0)
+    val resendCooldownSeconds: State<Int> = _resendCooldownSeconds
+
     fun requestPhoneOtp(phoneNumber: String, onSuccess: () -> Unit = {}) {
         scope.launch {
             _isSubmitting.value = true
             _errorMessage.value = null
 
             repository.requestPhoneOtp(phoneNumber)
-                .onSuccess {
+                .onSuccess { retryAfterSeconds ->
                     _pendingPhoneNumber.value = phoneNumber
+                    _resendCooldownSeconds.value = retryAfterSeconds
                     onSuccess()
                 }
                 .onFailure { error ->
