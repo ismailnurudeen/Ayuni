@@ -7,6 +7,10 @@ plugins {
     id("app.cash.sqldelight")
 }
 
+val apiBaseUrl = project.findProperty("API_BASE_URL")?.toString()
+    ?: System.getenv("API_BASE_URL")
+    ?: "http://localhost:3000/v1"
+
 kotlin {
     androidTarget()
     iosX64()
@@ -61,10 +65,13 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+        
+        buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
     }
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -74,4 +81,22 @@ sqldelight {
             packageName.set("com.ayuni.db")
         }
     }
+}
+
+// Generate config file for iOS
+val generateIosConfig by tasks.registering {
+    doLast {
+        val configDir = file("src/iosMain/kotlin/com/ayuni/app/platform")
+        configDir.mkdirs()
+        val configFile = file("$configDir/GeneratedApiBaseUrl.kt")
+        configFile.writeText("""
+            package com.ayuni.app.platform
+            
+            internal const val GENERATED_API_BASE_URL = "$apiBaseUrl"
+        """.trimIndent())
+    }
+}
+
+tasks.matching { it.name.contains("compileKotlinIos") }.configureEach {
+    dependsOn(generateIosConfig)
 }

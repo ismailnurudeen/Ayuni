@@ -5,6 +5,7 @@
         "timeout": true,
         "true": true,
         "npm install": true,
-        "npm run build": true
+        "npm run build": true,
+        "npm --prefix backend": true
     }
 }

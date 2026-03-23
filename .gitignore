@@ -13,3 +13,12 @@ backend/dist/
 backend/coverage/
 ops-console/dist/
 
+# Environment files
+.env
+.env.local
+.env.*.local
+backend/.env
+ops-console/.env
+
+# Generated config files
+composeApp/src/iosMain/kotlin/com/ayuni/app/platform/GeneratedApiBaseUrl.kt

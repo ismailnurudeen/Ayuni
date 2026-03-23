@@ -98,7 +98,8 @@ type OpsDashboard = {
   }>;
 };
 
-const API_BASE = "http://localhost:3000/v1";
+// API Configuration
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:3000/v1";
 
 export function App() {
   const [dashboard, setDashboard] = useState<OpsDashboard | null>(null);
