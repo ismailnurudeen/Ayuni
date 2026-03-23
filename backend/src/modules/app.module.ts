@@ -8,6 +8,8 @@ import { AuthController } from "./auth.controller";
 import { MobileController } from "./mobile.controller";
 import { OpsController } from "./ops.controller";
 import { AppService } from "./app.service";
+import { AuthService } from "./auth.service";
+import { AuthGuard } from "./auth.guard";
 import { DatabaseService } from "../database/database.service";
 
 @Module({
@@ -21,6 +23,6 @@ import { DatabaseService } from "../database/database.service";
     BookingController,
     SafetyController
   ],
-  providers: [DatabaseService, AppService]
+  providers: [DatabaseService, AppService, AuthService, AuthGuard]
 })
 export class AppModule {}

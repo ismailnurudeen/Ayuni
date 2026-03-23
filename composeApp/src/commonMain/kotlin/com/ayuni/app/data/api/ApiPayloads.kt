@@ -61,6 +61,7 @@ data class PhoneOtpRequest(
 data class PhoneOtpVerifyRequest(
     val phoneNumber: String,
     val code: String,
+    val deviceInfo: String? = null,
 )
 
 @Serializable
@@ -85,5 +86,29 @@ data class PhoneOtpResponse(
 @Serializable
 data class PhoneOtpVerifyResponse(
     val verified: Boolean = false,
+    val accessToken: String? = null,
+    val refreshToken: String? = null,
+    val accessTokenExpiresAt: String? = null,
+    val refreshTokenExpiresAt: String? = null,
     val bootstrap: BootstrapPayload? = null,
+)
+
+@Serializable
+data class RefreshTokenRequest(
+    val refreshToken: String,
+)
+
+@Serializable
+data class RefreshTokenResponse(
+    val success: Boolean,
+    val accessToken: String = "",
+    val refreshToken: String = "",
+    val accessTokenExpiresAt: String = "",
+    val refreshTokenExpiresAt: String = "",
+    val error: String? = null,
+)
+
+@Serializable
+data class LogoutResponse(
+    val success: Boolean,
 )

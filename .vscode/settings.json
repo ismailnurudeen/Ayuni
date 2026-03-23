@@ -1,0 +1,8 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "./gradlew": true,
+        "npm test": true,
+        "timeout": true,
+        "true": true
+    }
+}

@@ -1,7 +1,9 @@
-import { Body, Controller, Get, Headers, Param, Post } from "@nestjs/common";
+import { Body, Controller, Get, Param, Post, UseGuards } from "@nestjs/common";
 import { AppService } from "./app.service";
+import { AuthGuard, UserId } from "./auth.guard";
 
 @Controller()
+@UseGuards(AuthGuard)
 export class SafetyController {
   constructor(private readonly appService: AppService) {}
 
@@ -9,7 +11,7 @@ export class SafetyController {
   createReport(
     @Param("id") id: string,
     @Body() body: { category: "LateArrival" | "NoShow" | "UnsafeBehavior"; details: string },
-    @Headers("x-user-id") userId?: string
+    @UserId() userId: string
   ) {
     return this.appService.createReport({
       bookingId: id,
@@ -19,7 +21,7 @@ export class SafetyController {
   }
 
   @Get("ops/overview")
-  getOpsOverview(@Headers("x-user-id") userId?: string) {
+  getOpsOverview(@UserId() userId: string) {
     return this.appService.getOpsOverview(userId);
   }
 }

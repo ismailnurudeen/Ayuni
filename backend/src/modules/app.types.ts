@@ -12,6 +12,26 @@ export type PaymentStatus = "initiated";
 export type ReportSeverity = "high" | "medium";
 export type ReportStatus = "open" | "resolved";
 
+export type Session = {
+  id: string;
+  userId: string;
+  accessToken: string;
+  refreshToken: string;
+  accessTokenExpiresAt: string;
+  refreshTokenExpiresAt: string;
+  deviceInfo?: string;
+  createdAt: string;
+  updatedAt: string;
+  lastUsedAt: string;
+};
+
+export type AuthTokens = {
+  accessToken: string;
+  refreshToken: string;
+  accessTokenExpiresAt: string;
+  refreshTokenExpiresAt: string;
+};
+
 export type VerificationStatus = {
   phoneVerified: boolean;
   selfieVerified: boolean;
@@ -44,6 +64,8 @@ export type SuggestionProfile = {
   id: string;
   displayName: string;
   age: number;
+  gender: string;
+  heightCm: number;
   city: City;
   bio: string;
   intent: DatingIntent;

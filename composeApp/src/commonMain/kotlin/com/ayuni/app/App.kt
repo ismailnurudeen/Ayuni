@@ -10,18 +10,16 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
-import com.ayuni.app.domain.SuggestionProfile
 import com.ayuni.app.data.api.AyuniApiClient
+import com.ayuni.app.data.repository.AyuniRepository
+import com.ayuni.app.platform.createTokenStorage
 import com.ayuni.app.ui.AppRoute
-import com.ayuni.app.ui.AppScreenState
 import com.ayuni.app.ui.design.AyuniTheme
 import com.ayuni.app.ui.navigation.AyuniBottomBar
 import com.ayuni.app.ui.screens.onboarding.BasicProfileOnboardingScreen
@@ -35,49 +33,76 @@ import com.ayuni.app.ui.screens.notifications.NotificationsScreen
 import com.ayuni.app.ui.screens.profile.ProfileHubScreen
 import com.ayuni.app.ui.screens.profile.*
 import com.ayuni.app.ui.screens.profile.ProfileScreen
-import com.ayuni.app.platform.logError
+import com.ayuni.app.ui.state.rememberAppStateHolder
+import com.ayuni.app.ui.state.rememberOnboardingStateHolder
+import com.ayuni.app.ui.state.rememberProfileStateHolder
+import com.ayuni.app.ui.state.rememberRoundStateHolder
 import kotlinx.datetime.*
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlin.time.Clock
 
 @Composable
 fun AyuniApp() {
-    val apiClient = remember { AyuniApiClient() }
-    val coroutineScope = rememberCoroutineScope()
+    // Setup repository and token storage
+    val tokenStorage = remember { createTokenStorage() }
+    val apiClient = remember { AyuniApiClient(tokenStorage) }
+    val repository = remember { AyuniRepository(apiClient) }
+
+    // Create state holders for each feature domain
+    val appStateHolder = rememberAppStateHolder(repository, tokenStorage)
+    val onboardingStateHolder = rememberOnboardingStateHolder(repository, tokenStorage) { bootstrap ->
+        appStateHolder.applyBootstrap(bootstrap)
+        roundStateHolder.applyReactionsFromBootstrap(bootstrap.reactions)
+    }
+    val roundStateHolder = rememberRoundStateHolder(repository) { bootstrap ->
+        appStateHolder.applyBootstrap(bootstrap)
+        roundStateHolder.applyReactionsFromBootstrap(bootstrap.reactions)
+    }
+    val profileStateHolder = rememberProfileStateHolder(repository) { bootstrap ->
+        appStateHolder.applyBootstrap(bootstrap)
+    }
+
+    // UI-level routing state
     var route by remember { mutableStateOf(AppRoute.Round) }
     var roundScreen by remember { mutableStateOf(RoundScreen.Active) }
     var profileScreen by remember { mutableStateOf(ProfileScreen.Hub) }
     var selectedDrawerProfileId by remember { mutableStateOf<String?>(null) }
-    var state by remember { mutableStateOf(AppScreenState.demo()) }
-    var isLoading by remember { mutableStateOf(true) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-    var authSubmitting by remember { mutableStateOf(false) }
-    var authErrorMessage by remember { mutableStateOf<String?>(null) }
     var onboardingStep by remember { mutableStateOf(OnboardingFlowStep.Welcome) }
-    var pendingPhoneNumber by remember { mutableStateOf("") }
-    val reactions = remember { mutableStateMapOf<String, RoundReaction>() }
 
+    // Extract state from holders
+    val state by appStateHolder.state
+    val isLoading by appStateHolder.isLoading
+    val errorMessage by appStateHolder.errorMessage
+
+    // Sync onboarding step with backend state
+    LaunchedEffect(state.onboarding.step, state.onboarding.completed) {
+        onboardingStep = when (state.onboarding.step) {
+            com.ayuni.app.domain.OnboardingStep.PhoneEntry -> OnboardingFlowStep.Phone
+            com.ayuni.app.domain.OnboardingStep.OtpVerification -> OnboardingFlowStep.Otp
+            com.ayuni.app.domain.OnboardingStep.BasicProfile -> OnboardingFlowStep.Basics
+            com.ayuni.app.domain.OnboardingStep.Complete -> OnboardingFlowStep.Basics
+            else -> OnboardingFlowStep.Welcome
+        }
+    }
+
+    // Countdown timer logic (could be moved to a dedicated state holder later)
     LaunchedEffect(state.matchround.nextMatchroundLabel) {
         while (true) {
             val nowInstant = Clock.System.now()
-            val now = nowInstant.toLocalDateTime(kotlinx.datetime.TimeZone.currentSystemDefault())
+            val now = nowInstant.toLocalDateTime(TimeZone.currentSystemDefault())
 
-            // For now, we assume the next match round is at 8:00 PM (20:00)
-            // Ideally, we'd parse this from state.matchround.nextMatchroundLabel
             val targetHour = 20
             val targetMinute = 0
 
-            var targetDateTime = kotlinx.datetime.LocalDateTime(now.year, now.month, now.dayOfMonth, targetHour, targetMinute, 0)
+            var targetDateTime = LocalDateTime(now.year, now.month, now.dayOfMonth, targetHour, targetMinute, 0)
 
-            // If it's already past 8:00 PM, the next round is tomorrow at 8:00 PM
             if (now.hour >= targetHour && (now.hour > targetHour || now.minute >= targetMinute)) {
-                val tomorrowInstant = nowInstant.plus(1, kotlinx.datetime.DateTimeUnit.DAY, kotlinx.datetime.TimeZone.currentSystemDefault())
-                val tomorrow = tomorrowInstant.toLocalDateTime(kotlinx.datetime.TimeZone.currentSystemDefault())
-                targetDateTime = kotlinx.datetime.LocalDateTime(tomorrow.year, tomorrow.month, tomorrow.dayOfMonth, targetHour, targetMinute, 0)
+                val tomorrowInstant = nowInstant.plus(1, DateTimeUnit.DAY, TimeZone.currentSystemDefault())
+                val tomorrow = tomorrowInstant.toLocalDateTime(TimeZone.currentSystemDefault())
+                targetDateTime = LocalDateTime(tomorrow.year, tomorrow.month, tomorrow.dayOfMonth, targetHour, targetMinute, 0)
             }
 
-            val targetInstant = targetDateTime.toInstant(kotlinx.datetime.TimeZone.currentSystemDefault())
+            val targetInstant = targetDateTime.toInstant(TimeZone.currentSystemDefault())
             val duration = targetInstant - nowInstant
             val totalSeconds = duration.inWholeSeconds
 
@@ -86,55 +111,19 @@ fun AyuniApp() {
                 val m = (totalSeconds % 3600) / 60
                 val s = totalSeconds % 60
                 val newCountdown = "${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}"
-
-                state = state.copy(matchround = state.matchround.copy(countdown = newCountdown))
+                appStateHolder.updateCountdown(newCountdown)
             } else {
-                state = state.copy(matchround = state.matchround.copy(countdown = "00:00:00"))
+                appStateHolder.updateCountdown("00:00:00")
             }
 
             delay(1000)
         }
     }
 
-    fun applyBootstrap(payload: com.ayuni.app.data.api.BootstrapPayload) {
-        state = payload.toScreenState()
-        reactions.clear()
-        reactions.putAll(
-            payload.reactions.mapValues { (_, value) ->
-                if (value == "Accepted") RoundReaction.Accepted else RoundReaction.Declined
-            }
-        )
-    }
-
-    LaunchedEffect(Unit) {
-        runCatching { apiClient.getBootstrap() }
-            .onSuccess {
-                applyBootstrap(it)
-                isLoading = false
-            }
-            .onFailure {
-                logError("AyuniApp", "Failed to get bootstrap", it)
-                errorMessage = it.message ?: "Could not load Ayuni right now."
-                isLoading = false
-            }
-    }
-
-    LaunchedEffect(state.onboarding.step, state.onboarding.completed, state.onboarding.phoneNumber) {
-        onboardingStep = when (state.onboarding.step) {
-            com.ayuni.app.domain.OnboardingStep.PhoneEntry -> OnboardingFlowStep.Phone
-            com.ayuni.app.domain.OnboardingStep.OtpVerification -> OnboardingFlowStep.Otp
-            com.ayuni.app.domain.OnboardingStep.BasicProfile -> OnboardingFlowStep.Basics
-            com.ayuni.app.domain.OnboardingStep.Complete -> OnboardingFlowStep.Basics
-            else -> OnboardingFlowStep.Welcome
-        }
-        if (state.onboarding.phoneNumber.isNotBlank()) {
-            pendingPhoneNumber = state.onboarding.phoneNumber
-        }
-    }
-
-    val acceptedProfiles = state.suggestions.filter { reactions[it.id] == RoundReaction.Accepted }
-    val declinedProfiles = state.suggestions.filter { reactions[it.id] == RoundReaction.Declined }
-    val activeProfiles = state.suggestions.filter { reactions[it.id] == null }
+    // Compute derived state
+    val acceptedProfiles = state.suggestions.filter { roundStateHolder.reactions[it.id] == RoundReaction.Accepted }
+    val declinedProfiles = state.suggestions.filter { roundStateHolder.reactions[it.id] == RoundReaction.Declined }
+    val activeProfiles = state.suggestions.filter { roundStateHolder.reactions[it.id] == null }
     val drawerProfile = state.suggestions.firstOrNull { it.id == selectedDrawerProfileId }
 
     AyuniTheme {
@@ -161,81 +150,48 @@ fun AyuniApp() {
                     !state.onboarding.completed -> when (onboardingStep) {
                         OnboardingFlowStep.Welcome -> WelcomeScreen(
                             onContinue = {
-                                authErrorMessage = null
+                                onboardingStateHolder.clearError()
                                 onboardingStep = OnboardingFlowStep.Phone
                             }
                         )
 
                         OnboardingFlowStep.Phone -> PhoneEntryScreen(
-                            phoneNumber = pendingPhoneNumber,
-                            isSubmitting = authSubmitting,
-                            errorMessage = authErrorMessage,
+                            phoneNumber = onboardingStateHolder.pendingPhoneNumber.value,
+                            isSubmitting = onboardingStateHolder.isSubmitting.value,
+                            errorMessage = onboardingStateHolder.errorMessage.value,
                             onBack = { onboardingStep = OnboardingFlowStep.Welcome },
                             onSubmit = { phone ->
-                                coroutineScope.launch {
-                                    authSubmitting = true
-                                    authErrorMessage = null
-                                    runCatching { apiClient.requestPhoneOtp(phone) }
-                                        .onSuccess {
-                                            pendingPhoneNumber = phone
-                                            onboardingStep = OnboardingFlowStep.Otp
-                                        }
-                                        .onFailure {
-                                            logError("AyuniApp", "Failed to request OTP", it)
-                                            authErrorMessage = it.message ?: "Could not send code right now."
-                                        }
-                                    authSubmitting = false
+                                onboardingStateHolder.requestPhoneOtp(phone) {
+                                    onboardingStep = OnboardingFlowStep.Otp
                                 }
                             }
                         )
 
                         OnboardingFlowStep.Otp -> OtpVerificationScreen(
-                            phoneNumber = pendingPhoneNumber,
-                            isSubmitting = authSubmitting,
-                            errorMessage = authErrorMessage,
+                            phoneNumber = onboardingStateHolder.pendingPhoneNumber.value,
+                            isSubmitting = onboardingStateHolder.isSubmitting.value,
+                            errorMessage = onboardingStateHolder.errorMessage.value,
                             onBack = { onboardingStep = OnboardingFlowStep.Phone },
                             onSubmit = { code ->
-                                coroutineScope.launch {
-                                    authSubmitting = true
-                                    authErrorMessage = null
-                                    runCatching { apiClient.verifyPhoneOtp(pendingPhoneNumber, code) }
-                                        .onSuccess {
-                                            applyBootstrap(it)
-                                            onboardingStep = OnboardingFlowStep.Basics
-                                        }
-                                        .onFailure {
-                                            logError("AyuniApp", "Failed to verify OTP", it)
-                                            authErrorMessage = it.message ?: "That code did not work."
-                                        }
-                                    authSubmitting = false
-                                }
+                                onboardingStateHolder.verifyPhoneOtp(
+                                    onboardingStateHolder.pendingPhoneNumber.value,
+                                    code
+                                )
                             }
                         )
 
                         OnboardingFlowStep.Basics -> BasicProfileOnboardingScreen(
-                            isSubmitting = authSubmitting,
-                            errorMessage = authErrorMessage,
+                            isSubmitting = onboardingStateHolder.isSubmitting.value,
+                            errorMessage = onboardingStateHolder.errorMessage.value,
                             onSubmit = { firstName, birthDate, genderIdentity, interestedIn, city, acceptedTerms ->
-                                coroutineScope.launch {
-                                    authSubmitting = true
-                                    authErrorMessage = null
-                                    runCatching {
-                                        apiClient.completeBasicOnboarding(
-                                            firstName = firstName,
-                                            birthDate = birthDate,
-                                            genderIdentity = genderIdentity,
-                                            interestedIn = interestedIn,
-                                            city = city,
-                                            acceptedTerms = acceptedTerms
-                                        )
-                                    }
-                                        .onSuccess { applyBootstrap(it) }
-                                        .onFailure {
-                                            logError("AyuniApp", "Failed to complete onboarding", it)
-                                            authErrorMessage = it.message ?: "Could not finish signup right now."
-                                        }
-                                    authSubmitting = false
-                                }
+                                onboardingStateHolder.completeBasicOnboarding(
+                                    firstName = firstName,
+                                    birthDate = birthDate,
+                                    genderIdentity = genderIdentity,
+                                    interestedIn = interestedIn,
+                                    city = city,
+                                    acceptedTerms = acceptedTerms
+                                )
                             }
                         )
                     }
@@ -273,11 +229,13 @@ fun AyuniApp() {
                                 bookings = state.bookings,
                                 onOpenInbox = { route = AppRoute.Notifications }
                             )
+
                             AppRoute.Notifications -> NotificationsScreen(
                                 padding = innerPadding,
                                 notifications = state.notifications,
                                 onBack = { route = AppRoute.Round }
                             )
+
                             AppRoute.Profile -> when (profileScreen) {
                                 ProfileScreen.Hub -> ProfileHubScreen(
                                     padding = innerPadding,
@@ -300,14 +258,11 @@ fun AyuniApp() {
                                     padding = innerPadding,
                                     bio = state.editableProfile.bio,
                                     onBack = { profileScreen = ProfileScreen.EditProfile },
-                                    onSave = {
-                                        coroutineScope.launch {
-                                            runCatching { apiClient.updateProfile(state.editableProfile.copy(bio = it)) }
-                                                .onSuccess {
-                                                    applyBootstrap(it)
-                                                    profileScreen = ProfileScreen.EditProfile
-                                                }
-                                                .onFailure { logError("AyuniApp", "Failed to update bio", it) }
+                                    onSave = { newBio ->
+                                        profileStateHolder.updateProfile(
+                                            state.editableProfile.copy(bio = newBio)
+                                        ) {
+                                            profileScreen = ProfileScreen.EditProfile
                                         }
                                     }
                                 )
@@ -316,9 +271,10 @@ fun AyuniApp() {
                                     padding = innerPadding,
                                     selectedInterests = state.editableProfile.interests,
                                     onBack = { profileScreen = ProfileScreen.EditProfile },
-                                    onSave = {
-                                        coroutineScope.launch {
-                                            applyBootstrap(apiClient.updateProfile(state.editableProfile.copy(interests = it)))
+                                    onSave = { interests ->
+                                        profileStateHolder.updateProfile(
+                                            state.editableProfile.copy(interests = interests)
+                                        ) {
                                             profileScreen = ProfileScreen.EditProfile
                                         }
                                     }
@@ -328,9 +284,10 @@ fun AyuniApp() {
                                     padding = innerPadding,
                                     selectedIntention = state.editableProfile.datingIntention,
                                     onBack = { profileScreen = ProfileScreen.EditProfile },
-                                    onSave = {
-                                        coroutineScope.launch {
-                                            applyBootstrap(apiClient.updateProfile(state.editableProfile.copy(datingIntention = it)))
+                                    onSave = { intention ->
+                                        profileStateHolder.updateProfile(
+                                            state.editableProfile.copy(datingIntention = intention)
+                                        ) {
                                             profileScreen = ProfileScreen.EditProfile
                                         }
                                     }
@@ -340,9 +297,10 @@ fun AyuniApp() {
                                     padding = innerPadding,
                                     selectedReligions = state.editableProfile.religion,
                                     onBack = { profileScreen = ProfileScreen.EditProfile },
-                                    onSave = {
-                                        coroutineScope.launch {
-                                            applyBootstrap(apiClient.updateProfile(state.editableProfile.copy(religion = it)))
+                                    onSave = { religion ->
+                                        profileStateHolder.updateProfile(
+                                            state.editableProfile.copy(religion = religion)
+                                        ) {
                                             profileScreen = ProfileScreen.EditProfile
                                         }
                                     }
@@ -352,9 +310,10 @@ fun AyuniApp() {
                                     padding = innerPadding,
                                     selectedTraits = state.editableProfile.traits,
                                     onBack = { profileScreen = ProfileScreen.EditProfile },
-                                    onSave = {
-                                        coroutineScope.launch {
-                                            applyBootstrap(apiClient.updateProfile(state.editableProfile.copy(traits = it)))
+                                    onSave = { traits ->
+                                        profileStateHolder.updateProfile(
+                                            state.editableProfile.copy(traits = traits)
+                                        ) {
                                             profileScreen = ProfileScreen.EditProfile
                                         }
                                     }
@@ -364,9 +323,10 @@ fun AyuniApp() {
                                     padding = innerPadding,
                                     selectedSmoking = state.editableProfile.smoking,
                                     onBack = { profileScreen = ProfileScreen.EditProfile },
-                                    onSave = {
-                                        coroutineScope.launch {
-                                            applyBootstrap(apiClient.updateProfile(state.editableProfile.copy(smoking = it)))
+                                    onSave = { smoking ->
+                                        profileStateHolder.updateProfile(
+                                            state.editableProfile.copy(smoking = smoking)
+                                        ) {
                                             profileScreen = ProfileScreen.EditProfile
                                         }
                                     }
@@ -376,9 +336,10 @@ fun AyuniApp() {
                                     padding = innerPadding,
                                     selectedDrinking = state.editableProfile.drinking,
                                     onBack = { profileScreen = ProfileScreen.EditProfile },
-                                    onSave = {
-                                        coroutineScope.launch {
-                                            applyBootstrap(apiClient.updateProfile(state.editableProfile.copy(drinking = it)))
+                                    onSave = { drinking ->
+                                        profileStateHolder.updateProfile(
+                                            state.editableProfile.copy(drinking = drinking)
+                                        ) {
                                             profileScreen = ProfileScreen.EditProfile
                                         }
                                     }
@@ -388,9 +349,10 @@ fun AyuniApp() {
                                     padding = innerPadding,
                                     selectedEducation = state.editableProfile.education,
                                     onBack = { profileScreen = ProfileScreen.EditProfile },
-                                    onSave = {
-                                        coroutineScope.launch {
-                                            applyBootstrap(apiClient.updateProfile(state.editableProfile.copy(education = it)))
+                                    onSave = { education ->
+                                        profileStateHolder.updateProfile(
+                                            state.editableProfile.copy(education = education)
+                                        ) {
                                             profileScreen = ProfileScreen.EditProfile
                                         }
                                     }
@@ -400,9 +362,10 @@ fun AyuniApp() {
                                     padding = innerPadding,
                                     job = state.editableProfile.job,
                                     onBack = { profileScreen = ProfileScreen.EditProfile },
-                                    onSave = {
-                                        coroutineScope.launch {
-                                            applyBootstrap(apiClient.updateProfile(state.editableProfile.copy(job = it)))
+                                    onSave = { job ->
+                                        profileStateHolder.updateProfile(
+                                            state.editableProfile.copy(job = job)
+                                        ) {
                                             profileScreen = ProfileScreen.EditProfile
                                         }
                                     }
@@ -418,9 +381,8 @@ fun AyuniApp() {
                                     padding = innerPadding,
                                     preferences = state.datingPreferences,
                                     onBack = { profileScreen = ProfileScreen.Hub },
-                                    onSave = {
-                                        coroutineScope.launch {
-                                            applyBootstrap(apiClient.updateDatingPreferences(it))
+                                    onSave = { preferences ->
+                                        profileStateHolder.updateDatingPreferences(preferences) {
                                             profileScreen = ProfileScreen.Hub
                                         }
                                     }
@@ -430,9 +392,8 @@ fun AyuniApp() {
                                     padding = innerPadding,
                                     settings = state.accountSettings,
                                     onBack = { profileScreen = ProfileScreen.Hub },
-                                    onSave = {
-                                        coroutineScope.launch {
-                                            applyBootstrap(apiClient.updateAccountSettings(it))
+                                    onSave = { settings ->
+                                        profileStateHolder.updateAccountSettings(settings) {
                                             profileScreen = ProfileScreen.Hub
                                         }
                                     }
@@ -442,9 +403,8 @@ fun AyuniApp() {
                                     padding = innerPadding,
                                     preferences = state.appPreferences,
                                     onBack = { profileScreen = ProfileScreen.Hub },
-                                    onSave = {
-                                        coroutineScope.launch {
-                                            applyBootstrap(apiClient.updateAppSettings(it))
+                                    onSave = { preferences ->
+                                        profileStateHolder.updateAppSettings(preferences) {
                                             profileScreen = ProfileScreen.Hub
                                         }
                                     }
@@ -454,26 +414,23 @@ fun AyuniApp() {
                     }
                 }
 
+                // Profile drawer overlay
                 if (drawerProfile != null) {
                     ProfileDrawer(
                         profile = drawerProfile,
-                        reaction = reactions[drawerProfile.id],
-                        acceptanceLocked = reactions[drawerProfile.id] != RoundReaction.Accepted && acceptedProfiles.size >= 5,
+                        reaction = roundStateHolder.reactions[drawerProfile.id],
+                        acceptanceLocked = roundStateHolder.reactions[drawerProfile.id] != RoundReaction.Accepted && acceptedProfiles.size >= 5,
                         onDismiss = { selectedDrawerProfileId = null },
                         onAccept = {
-                            coroutineScope.launch {
-                                applyBootstrap(apiClient.updateReaction(drawerProfile.id, accepted = true))
-                                if (roundScreen == RoundScreen.Active) {
-                                    selectedDrawerProfileId = null
-                                }
+                            roundStateHolder.updateReaction(drawerProfile.id, accepted = true)
+                            if (roundScreen == RoundScreen.Active) {
+                                selectedDrawerProfileId = null
                             }
                         },
                         onDecline = {
-                            coroutineScope.launch {
-                                applyBootstrap(apiClient.updateReaction(drawerProfile.id, accepted = false))
-                                if (roundScreen == RoundScreen.Active) {
-                                    selectedDrawerProfileId = null
-                                }
+                            roundStateHolder.updateReaction(drawerProfile.id, accepted = false)
+                            if (roundScreen == RoundScreen.Active) {
+                                selectedDrawerProfileId = null
                             }
                         }
                     )

@@ -2,6 +2,7 @@ import { Injectable, OnModuleInit } from "@nestjs/common";
 import { PoolClient } from "pg";
 import { QueryResult, QueryResultRow } from "pg";
 import { DatabaseService } from "../database/database.service";
+import { AuthService } from "./auth.service";
 import {
   AccountSettings,
   AppPreferences,
@@ -68,7 +69,10 @@ type Aggregate = {
 export class AppService implements OnModuleInit {
   private readonly testOtpCode = "123456";
 
-  constructor(private readonly database: DatabaseService) {}
+  constructor(
+    private readonly database: DatabaseService,
+    private readonly authService: AuthService
+  ) {}
 
   async onModuleInit() {
     await this.seedCatalogData();
@@ -91,8 +95,8 @@ export class AppService implements OnModuleInit {
     return this.buildBootstrap(aggregate);
   }
 
-  async requestPhoneOtp(phoneNumber: string, rawUserId?: string) {
-    const userId = this.resolveUserId(rawUserId);
+  async requestPhoneOtp(phoneNumber: string) {
+    const userId = this.resolveUserId();
     await this.ensureUser(userId);
 
     await this.database.withTransaction(async (client) => {
@@ -115,11 +119,11 @@ export class AppService implements OnModuleInit {
     };
   }
 
-  async verifyPhoneOtp(phoneNumber: string, code: string, rawUserId?: string) {
-    const userId = this.resolveUserId(rawUserId);
+  async verifyPhoneOtp(phoneNumber: string, code: string, deviceInfo?: string) {
+    const userId = this.resolveUserId();
     await this.ensureUser(userId);
 
-    const verified = await this.database.withTransaction(async (client) => {
+    const result = await this.database.withTransaction(async (client) => {
       const state = await this.loadState(userId, client);
       const success = phoneNumber === state.pendingPhoneNumber && code === this.testOtpCode;
 
@@ -137,13 +141,25 @@ export class AppService implements OnModuleInit {
         state.pendingPhoneNumber = "";
         await client.query("UPDATE users SET phone_number = $2, updated_at = NOW() WHERE id = $1", [userId, phoneNumber]);
         await this.saveState(userId, state, client);
+
+        // Create authenticated session and return tokens
+        const tokens = await this.authService.createSession(userId, deviceInfo, client);
+        return { success: true, tokens };
       }
 
-      return success;
+      return { success: false, tokens: null };
     });
 
+    if (!result.success) {
+      return {
+        verified: false,
+        bootstrap: await this.getBootstrap(userId)
+      };
+    }
+
     return {
-      verified,
+      verified: true,
+      ...result.tokens,
       bootstrap: await this.getBootstrap(userId)
     };
   }
@@ -899,13 +915,40 @@ export class AppService implements OnModuleInit {
         FROM suggestion_profiles
         WHERE city = ANY($1::text[])
         ORDER BY created_at ASC
-        LIMIT 5
       `,
       [preferredCities]
     );
-    const fallback = result.rowCount
-      ? result.rows
-      : (await queryable.query<{ id: string; payload: SuggestionProfile }>("SELECT id, payload FROM suggestion_profiles ORDER BY created_at ASC LIMIT 5")).rows;
+
+    let candidates = result.rows;
+    const filtered = this.filterByPreferences(candidates.map((r) => r.payload), state.datingPreferences);
+    candidates = candidates.filter((r) => filtered.some((f) => f.id === r.payload.id));
+
+    if (candidates.length === 0) {
+      const allResult = await queryable.query<{ id: string; payload: SuggestionProfile }>(
+        "SELECT id, payload FROM suggestion_profiles ORDER BY created_at ASC"
+      );
+      const allFiltered = this.filterByPreferences(allResult.rows.map((r) => r.payload), state.datingPreferences);
+      candidates = allResult.rows.filter((r) => allFiltered.some((f) => f.id === r.payload.id));
+    }
+
+    if (candidates.length === 0) {
+      const fallbackResult = await queryable.query<{ id: string; payload: SuggestionProfile }>(
+        `
+          SELECT id, payload
+          FROM suggestion_profiles
+          WHERE city = ANY($1::text[])
+          ORDER BY created_at ASC
+          LIMIT 5
+        `,
+        [preferredCities]
+      );
+      candidates = fallbackResult.rowCount
+        ? fallbackResult.rows
+        : (await queryable.query<{ id: string; payload: SuggestionProfile }>("SELECT id, payload FROM suggestion_profiles ORDER BY created_at ASC LIMIT 5")).rows;
+    }
+
+    candidates = candidates.slice(0, 5);
+
     const roundId = `round-${userId}-${Date.now()}`;
     await queryable.query(
       `
@@ -915,7 +958,7 @@ export class AppService implements OnModuleInit {
       [roundId, userId, preferredCities[0] ?? "Lagos", state.matchround]
     );
 
-    for (const [index, profile] of fallback.entries()) {
+    for (const [index, profile] of candidates.entries()) {
       await queryable.query("INSERT INTO round_profiles (round_id, profile_id, position) VALUES ($1, $2, $3)", [roundId, profile.id, index]);
     }
 
@@ -923,6 +966,70 @@ export class AppService implements OnModuleInit {
       id: roundId,
       payload: state.matchround
     };
+  }
+
+  private filterByPreferences(profiles: SuggestionProfile[], preferences: DatingPreferences): SuggestionProfile[] {
+    return profiles.filter((profile) => {
+      if (!this.matchesAgeRange(profile.age, preferences.ageRange)) return false;
+      if (!this.matchesGender(profile.gender, preferences.genderIdentity)) return false;
+      if (!this.matchesHeightRange(profile.heightCm, preferences.heightRange)) return false;
+      if (!this.matchesAreas(profile.neighborhood, preferences.dateAreas)) return false;
+      if (!this.matchesActivities(profile.preferredDateType, preferences.preferredDateActivities)) return false;
+      return true;
+    });
+  }
+
+  private matchesAgeRange(age: number, ageRange: string): boolean {
+    if (!ageRange) return true;
+    const match = ageRange.match(/^(\d+)\s*-\s*(\d+)$/);
+    if (!match) return true;
+    const min = parseInt(match[1], 10);
+    const max = parseInt(match[2], 10);
+    return age >= min && age <= max;
+  }
+
+  private matchesGender(profileGender: string | undefined, preferredGender: string): boolean {
+    if (!preferredGender || !profileGender) return true;
+    const normalized = preferredGender.toLowerCase();
+    const profileNormalized = profileGender.toLowerCase();
+    if (normalized === "men" && profileNormalized === "man") return true;
+    if (normalized === "women" && profileNormalized === "woman") return true;
+    if (normalized === "everyone") return true;
+    return normalized === profileNormalized;
+  }
+
+  private matchesHeightRange(heightCm: number | undefined, heightRange: string): boolean {
+    if (!heightRange || heightCm == null) return true;
+    const match = heightRange.match(/^(\d+)\s*-\s*(\d+)/);
+    if (!match) return true;
+    const min = parseInt(match[1], 10);
+    const max = parseInt(match[2], 10);
+    return heightCm >= min && heightCm <= max;
+  }
+
+  private matchesAreas(neighborhood: string, dateAreas: string[]): boolean {
+    if (!dateAreas || dateAreas.length === 0) return true;
+    if (!neighborhood) return true;
+    const normalizedNeighborhood = neighborhood.toLowerCase();
+    return dateAreas.some((area) => {
+      const normalizedArea = area.toLowerCase();
+      return normalizedNeighborhood.includes(normalizedArea) || normalizedArea.includes(normalizedNeighborhood);
+    });
+  }
+
+  private matchesActivities(preferredDateType: string, activities: string[]): boolean {
+    if (!activities || activities.length === 0) return true;
+    if (!preferredDateType) return true;
+    const activityMap: Record<string, string[]> = {
+      Cafe: ["coffee", "cafe"],
+      Lounge: ["drinks", "lounge"],
+      DessertSpot: ["dessert"],
+      Brunch: ["brunch"],
+      CasualRestaurant: ["casual dinner", "casual restaurant", "dinner"],
+      HotelLobby: ["drinks", "hotel lobby"]
+    };
+    const mapped = activityMap[preferredDateType] ?? [preferredDateType.toLowerCase()];
+    return activities.some((activity) => mapped.includes(activity.toLowerCase()));
   }
 
   private async loadRoundSuggestions(userId: string, queryable: Queryable = this.database as Queryable) {

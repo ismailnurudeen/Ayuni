@@ -6,19 +6,21 @@ import { newDb } from "pg-mem";
 
 type Queryable = Pick<Pool, "query">;
 
-type DatabaseServiceOptions = {
-  pool?: Pool;
-};
-
 @Injectable()
 export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   private pool!: Pool;
   private mode: "postgres" | "pg-mem" = "pg-mem";
 
-  constructor(private readonly options?: DatabaseServiceOptions) {}
+  constructor(config?: { pool: Pool }) {
+    if (config?.pool) {
+      this.pool = config.pool;
+    }
+  }
 
   async onModuleInit() {
-    this.pool = this.options?.pool ?? this.createPool();
+    if (!this.pool) {
+      this.pool = this.createPool();
+    }
     await this.runMigrations();
   }
 
@@ -104,10 +106,4 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     const adapter = db.adapters.createPg();
     return new adapter.Pool();
   }
-}
-
-export async function runMigrationsWithPool(pool: Pool) {
-  const databaseService = new DatabaseService({ pool });
-  await databaseService.onModuleInit();
-  return databaseService;
 }
