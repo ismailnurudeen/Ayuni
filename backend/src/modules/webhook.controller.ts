@@ -1,6 +1,7 @@
 import { Body, Controller, Headers, HttpCode, Post, RawBodyRequest, Req } from "@nestjs/common";
 import { AppService } from "./app.service";
 import { PaystackService } from "./paystack.service";
+import { ReminderService } from "./reminder.service";
 
 type PaystackWebhookEvent = {
   event: string;
@@ -29,7 +30,8 @@ type PaystackWebhookEvent = {
 export class WebhookController {
   constructor(
     private readonly appService: AppService,
-    private readonly paystackService: PaystackService
+    private readonly paystackService: PaystackService,
+    private readonly reminderService: ReminderService
   ) {}
 
   @Post("paystack")
@@ -69,6 +71,17 @@ export class WebhookController {
     }
 
     // Acknowledge other events
+    return { status: "success" };
+  }
+
+  @Post("twilio/status")
+  @HttpCode(200)
+  async handleTwilioStatusCallback(
+    @Body() body: { MessageSid: string; MessageStatus: string; To?: string; ErrorCode?: string }
+  ) {
+    if (body.MessageSid && body.MessageStatus) {
+      await this.reminderService.updateDeliveryStatus(body.MessageSid, body.MessageStatus);
+    }
     return { status: "success" };
   }
 }

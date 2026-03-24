@@ -105,6 +105,8 @@ export type DateBooking = {
   counterpartName: string;
   venueAddress: string;
   availability?: string[];
+  cancellationReason?: string;
+  cancelledAt?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -364,6 +366,7 @@ export type OpsDashboard = {
     pendingSelfieReviews: number;
     pendingGovIdReviews: number;
     activeFreezes: number;
+    pendingSupportRequests: number;
   };
   featureToggles: {
     requireGovIdForBooking: boolean;
@@ -371,6 +374,7 @@ export type OpsDashboard = {
   moderationQueue: SafetyReport[];
   selfieQueue: SelfieSubmission[];
   govIdQueue: GovIdSubmission[];
+  supportQueue: BookingSupportRequest[];
   venueNetwork: VenuePartner[];
   bookings: DateBooking[];
   verification: VerificationStatus;
@@ -403,6 +407,69 @@ export type UserStateRecord = {
   nextReportId: number;
   nextPaymentId: number;
   nextIncidentId: number;
+};
+
+export type ReminderChannel = "whatsapp" | "sms";
+export type ReminderStatus = "sent" | "delivered" | "read" | "failed";
+export type ReminderTemplate = "booking_confirmed" | "reminder_24h" | "reminder_2h" | "payment_nudge" | "cancellation_notice";
+
+export type ReminderLog = {
+  id: string;
+  userId: string;
+  bookingId?: string;
+  channel: ReminderChannel;
+  templateId: ReminderTemplate;
+  phoneNumber: string;
+  status: ReminderStatus;
+  failureReason?: string;
+  sentAt: string;
+  deliveredAt?: string;
+  readAt?: string;
+  failedAt?: string;
+};
+
+export type ReminderPreferences = {
+  userId: string;
+  bookingConfirmations: boolean;
+  reminders: boolean;
+  paymentNudges: boolean;
+  cancellationNotices: boolean;
+};
+
+export type CancellationReason =
+  | "schedule_conflict"
+  | "no_longer_interested"
+  | "safety_concern"
+  | "venue_issue"
+  | "other";
+
+export type SupportRequestStatus = "requested" | "under_review" | "approved" | "denied";
+export type RefundEligibility = "eligible" | "partial" | "ineligible" | "processed";
+export type SupportRequestType = "cancellation" | "reschedule";
+
+export type BookingSupportRequest = {
+  id: string;
+  bookingId: string;
+  userId: string;
+  type: SupportRequestType;
+  reason?: string;
+  status: SupportRequestStatus;
+  refundStatus?: RefundEligibility;
+  newAvailability?: string[];
+  resolutionNotes?: string;
+  resolvedBy?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type BookingAuditEntry = {
+  id: string;
+  bookingId: string;
+  actorId: string;
+  actorType: "user" | "ops" | "system";
+  action: string;
+  details?: Record<string, unknown>;
+  createdAt: string;
 };
 
 export type BasicOnboardingPayload = {

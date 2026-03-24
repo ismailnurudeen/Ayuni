@@ -9,11 +9,14 @@ import { MobileController } from "./mobile.controller";
 import { MediaController } from "./media.controller";
 import { OpsController } from "./ops.controller";
 import { WebhookController } from "./webhook.controller";
+import { ReminderController } from "./reminder.controller";
 import { AppService } from "./app.service";
 import { AuthService } from "./auth.service";
 import { AuthGuard } from "./auth.guard";
 import { OtpService } from "./otp.service";
 import { TwilioSmsService } from "./sms.service";
+import { WhatsAppService } from "./whatsapp.service";
+import { ReminderService } from "./reminder.service";
 import { MediaService } from "./media.service";
 import { PaystackService } from "./paystack.service";
 import { DatabaseService } from "../database/database.service";
@@ -29,8 +32,9 @@ import { DatabaseService } from "../database/database.service";
     MatchingController,
     BookingController,
     SafetyController,
-    WebhookController
+    WebhookController,
+    ReminderController
   ],
-  providers: [DatabaseService, AppService, AuthService, AuthGuard, OtpService, TwilioSmsService, MediaService, PaystackService]
+  providers: [DatabaseService, AppService, AuthService, AuthGuard, OtpService, TwilioSmsService, WhatsAppService, ReminderService, MediaService, PaystackService]
 })  
 export class AppModule {}

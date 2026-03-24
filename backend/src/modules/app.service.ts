@@ -7,10 +7,13 @@ import { OtpService } from "./otp.service";
 import { TwilioSmsService } from "./sms.service";
 import { MediaService } from "./media.service";
 import { PaystackService } from "./paystack.service";
+import { ReminderService } from "./reminder.service";
 import {
   AccountSettings,
   AppPreferences,
   BasicOnboardingPayload,
+  BookingAuditEntry,
+  BookingSupportRequest,
   BootstrapPayload,
   City,
   CreateVenuePayload,
@@ -30,6 +33,7 @@ import {
   SafetyIncident,
   AccountFreeze,
   SuggestionProfile,
+  SupportRequestStatus,
   UpdateVenuePayload,
   UserStateRecord,
   VenueDetail,
@@ -89,7 +93,8 @@ export class AppService implements OnModuleInit {
     private readonly otpService: OtpService,
     private readonly smsService: TwilioSmsService,
     private readonly mediaService: MediaService,
-    private readonly paystackService: PaystackService
+    private readonly paystackService: PaystackService,
+    private readonly reminderService: ReminderService
   ) {}
 
   async onModuleInit() {
@@ -736,6 +741,26 @@ export class AppService implements OnModuleInit {
         client
       );
 
+      // Send WhatsApp/SMS booking confirmation reminder
+      if (bookingId) {
+        try {
+          const bookingResult2 = await client.query(
+            "SELECT payload FROM bookings WHERE id = $1 AND user_id = $2",
+            [bookingId, userId]
+          );
+          if (bookingResult2.rows.length > 0) {
+            const confirmedBooking = bookingResult2.rows[0].payload as DateBooking;
+            const phoneNumber = state.accountSettings?.phoneNumber || "";
+            const userName = state.userSummary?.firstName || "there";
+            if (phoneNumber) {
+              await this.reminderService.sendBookingConfirmation(userId, confirmedBooking, phoneNumber, userName);
+            }
+          }
+        } catch (reminderErr) {
+          console.error("⚠️  Failed to send booking confirmation reminder:", reminderErr);
+        }
+      }
+
       console.log(`✓ Payment ${paymentId} completed for user ${userId}`);
     });
   }
@@ -1052,11 +1077,12 @@ export class AppService implements OnModuleInit {
     const reports = reportRows.rows.map((row: { payload: SafetyReport }) => row.payload);
     
     // Load other aggregate data for this user
-    const [bookings, suggestions, reactions, venues] = await Promise.all([
+    const [bookings, suggestions, reactions, venues, supportQueue] = await Promise.all([
       this.loadBookings(userId),
       this.loadRoundSuggestions(userId),
       this.loadReactions(userId),
-      this.loadAllVenues()
+      this.loadAllVenues(),
+      this.getSupportQueue(userId)
     ]);
 
     // Fetch pending selfie submissions
@@ -1149,7 +1175,8 @@ export class AppService implements OnModuleInit {
         supportWindow: "16:00-23:00 WAT",
         pendingSelfieReviews: selfieQueue.length,
         pendingGovIdReviews: govIdQueue.length,
-        activeFreezes: state.safety.activeFreeze ? 1 : 0
+        activeFreezes: state.safety.activeFreeze ? 1 : 0,
+        pendingSupportRequests: supportQueue.length
       },
       featureToggles: {
         requireGovIdForBooking: requireGovIdToggle?.enabled || false
@@ -1157,6 +1184,7 @@ export class AppService implements OnModuleInit {
       moderationQueue: reports.filter((item) => item.status === "open" || item.status === "investigating"),
       selfieQueue,
       govIdQueue,
+      supportQueue,
       venueNetwork: venues,
       bookings,
       verification: state.verification,
@@ -1715,6 +1743,421 @@ export class AppService implements OnModuleInit {
     });
 
     return this.getOpsDashboard(opsUserId);
+  }
+
+  // ── Booking Support Workflows (P1-05) ────────────────────────────
+
+  private async appendAuditLog(
+    bookingId: string,
+    actorId: string,
+    actorType: "user" | "ops" | "system",
+    action: string,
+    details?: Record<string, unknown>,
+    queryable: Queryable = this.database as Queryable
+  ) {
+    const id = `audit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const entry: BookingAuditEntry = {
+      id,
+      bookingId,
+      actorId,
+      actorType,
+      action,
+      details,
+      createdAt: new Date().toISOString()
+    };
+    await queryable.query(
+      "INSERT INTO booking_audit_log (id, booking_id, actor_id, actor_type, action, details, created_at) VALUES ($1, $2, $3, $4, $5, $6, NOW())",
+      [entry.id, entry.bookingId, entry.actorId, entry.actorType, entry.action, entry.details ? JSON.stringify(entry.details) : null]
+    );
+    return entry;
+  }
+
+  private isCancellationFree(booking: DateBooking): boolean {
+    // Free cancellation if 24+ hours before startAt
+    const startTime = new Date(booking.startAt).getTime();
+    const now = Date.now();
+    const hoursUntilDate = (startTime - now) / (1000 * 60 * 60);
+    return hoursUntilDate >= 24;
+  }
+
+  async requestCancellation(bookingId: string, reason: string, rawUserId?: string) {
+    const userId = this.resolveUserId(rawUserId);
+    await this.ensureUser(userId);
+
+    return this.database.withTransaction(async (client) => {
+      const booking = await this.loadBookingById(userId, bookingId, client);
+      if (!booking) {
+        throw new Error("Booking not found");
+      }
+
+      if (booking.status === "cancelled" || booking.status === "completed") {
+        throw new Error(`Cannot cancel a booking that is ${booking.status}`);
+      }
+
+      const isFree = this.isCancellationFree(booking);
+      const refundStatus = isFree ? "eligible" : "ineligible";
+
+      const requestId = `sr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const request: BookingSupportRequest = {
+        id: requestId,
+        bookingId,
+        userId,
+        type: "cancellation",
+        reason,
+        status: isFree ? "approved" : "requested",
+        refundStatus,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      await client.query(
+        `INSERT INTO booking_support_requests (id, booking_id, user_id, type, reason, status, refund_status, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())`,
+        [request.id, request.bookingId, request.userId, request.type, request.reason, request.status, request.refundStatus]
+      );
+
+      await this.appendAuditLog(bookingId, userId, "user", "cancellation_requested", { reason, isFree, refundStatus }, client);
+
+      if (isFree) {
+        // Auto-approve free cancellation
+        booking.status = "cancelled";
+        booking.cancellationReason = reason;
+        booking.cancelledAt = new Date().toISOString();
+        booking.updatedAt = new Date().toISOString();
+        await this.saveBooking(userId, booking, client);
+
+        await this.appendAuditLog(bookingId, "system", "system", "cancellation_auto_approved", { refundStatus: "eligible" }, client);
+
+        // Process refund if payment was completed
+        const paymentResult = await client.query<{ payload: PaymentRecord }>(
+          "SELECT payload FROM payments WHERE user_id = $1 AND payload->>'bookingId' = $2 AND status = 'completed' LIMIT 1",
+          [userId, bookingId]
+        );
+        if (paymentResult.rows.length > 0) {
+          const payment = paymentResult.rows[0].payload;
+          if (payment.paystackReference) {
+            await this.paystackService.refundTransaction(payment.paystackReference);
+            payment.status = "refunded";
+            payment.updatedAt = new Date().toISOString();
+            await client.query(
+              "UPDATE payments SET status = $1, payload = $2, updated_at = NOW() WHERE id = $3",
+              [payment.status, payment, payment.id]
+            );
+            request.refundStatus = "processed";
+            await client.query(
+              "UPDATE booking_support_requests SET refund_status = $1, updated_at = NOW() WHERE id = $2",
+              ["processed", request.id]
+            );
+          }
+        }
+
+        const state = await this.loadState(userId, client);
+        await this.pushNotification(userId, state, "Booking cancelled", "Your booking has been cancelled and a refund is being processed.", "Cancellation", client);
+        await this.saveState(userId, state, client);
+
+        // Send WhatsApp/SMS cancellation notice
+        try {
+          const phoneNumber = state.accountSettings?.phoneNumber || "";
+          if (phoneNumber) {
+            await this.reminderService.sendCancellationNotice(userId, booking, phoneNumber);
+          }
+        } catch (reminderErr) {
+          console.error("⚠️  Failed to send cancellation reminder:", reminderErr);
+        }
+      } else {
+        // Late cancellation — needs ops review
+        const state = await this.loadState(userId, client);
+        await this.pushNotification(userId, state, "Cancellation submitted", "Your cancellation request is under review. Late cancellations may forfeit the date token.", "Cancellation", client);
+        await this.saveState(userId, state, client);
+      }
+
+      return request;
+    });
+  }
+
+  async requestReschedule(bookingId: string, newAvailability: string[], rawUserId?: string) {
+    const userId = this.resolveUserId(rawUserId);
+    await this.ensureUser(userId);
+
+    return this.database.withTransaction(async (client) => {
+      const booking = await this.loadBookingById(userId, bookingId, client);
+      if (!booking) {
+        throw new Error("Booking not found");
+      }
+
+      if (booking.status === "cancelled" || booking.status === "completed") {
+        throw new Error(`Cannot reschedule a booking that is ${booking.status}`);
+      }
+
+      const requestId = `sr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const request: BookingSupportRequest = {
+        id: requestId,
+        bookingId,
+        userId,
+        type: "reschedule",
+        status: "requested",
+        newAvailability,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      await client.query(
+        `INSERT INTO booking_support_requests (id, booking_id, user_id, type, status, new_availability, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())`,
+        [request.id, request.bookingId, request.userId, request.type, request.status, JSON.stringify(newAvailability)]
+      );
+
+      await this.appendAuditLog(bookingId, userId, "user", "reschedule_requested", { newAvailability }, client);
+
+      const state = await this.loadState(userId, client);
+      await this.pushNotification(userId, state, "Reschedule submitted", "Your reschedule request is under review.", "Update", client);
+      await this.saveState(userId, state, client);
+
+      return request;
+    });
+  }
+
+  async getSupportQueue(opsUserId?: string) {
+    const rows = await this.database.query<{
+      id: string;
+      booking_id: string;
+      user_id: string;
+      type: string;
+      reason: string;
+      status: string;
+      refund_status: string;
+      new_availability: string[] | null;
+      resolution_notes: string;
+      resolved_by: string;
+      created_at: string;
+      updated_at: string;
+    }>(
+      `SELECT id, booking_id, user_id, type, reason, status, refund_status, new_availability, resolution_notes, resolved_by, created_at, updated_at
+       FROM booking_support_requests
+       WHERE status IN ('requested', 'under_review')
+       ORDER BY created_at ASC
+       LIMIT 100`
+    );
+
+    return rows.rows.map((r) => ({
+      id: r.id,
+      bookingId: r.booking_id,
+      userId: r.user_id,
+      type: r.type as "cancellation" | "reschedule",
+      reason: r.reason,
+      status: r.status as SupportRequestStatus,
+      refundStatus: r.refund_status,
+      newAvailability: r.new_availability,
+      resolutionNotes: r.resolution_notes,
+      resolvedBy: r.resolved_by,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at
+    } as BookingSupportRequest));
+  }
+
+  async approveSupportRequest(requestId: string, notes?: string, opsUserId?: string) {
+    const opsId = opsUserId || "ops-user";
+
+    return this.database.withTransaction(async (client) => {
+      const result = await client.query<{
+        id: string;
+        booking_id: string;
+        user_id: string;
+        type: string;
+        status: string;
+        refund_status: string;
+      }>(
+        "SELECT id, booking_id, user_id, type, status, refund_status FROM booking_support_requests WHERE id = $1",
+        [requestId]
+      );
+
+      if (result.rows.length === 0) {
+        throw new Error("Support request not found");
+      }
+
+      const row = result.rows[0];
+      if (row.status === "approved" || row.status === "denied") {
+        throw new Error(`Support request already ${row.status}`);
+      }
+
+      await client.query(
+        "UPDATE booking_support_requests SET status = $1, resolution_notes = $2, resolved_by = $3, updated_at = NOW() WHERE id = $4",
+        ["approved", notes || "Approved by ops", opsId, requestId]
+      );
+
+      if (row.type === "cancellation") {
+        // Cancel the booking
+        const bookingResult = await client.query<{ payload: DateBooking; user_id: string }>(
+          "SELECT payload, user_id FROM bookings WHERE id = $1",
+          [row.booking_id]
+        );
+        if (bookingResult.rows.length > 0) {
+          const booking = bookingResult.rows[0].payload;
+          const bookingUserId = bookingResult.rows[0].user_id;
+          booking.status = "cancelled";
+          booking.cancellationReason = "Approved by ops";
+          booking.cancelledAt = new Date().toISOString();
+          booking.updatedAt = new Date().toISOString();
+          await client.query(
+            "UPDATE bookings SET payload = $1, updated_at = NOW() WHERE id = $2",
+            [booking, booking.id]
+          );
+
+          // Process refund
+          const paymentResult = await client.query<{ payload: PaymentRecord }>(
+            "SELECT payload FROM payments WHERE user_id = $1 AND payload->>'bookingId' = $2 AND status = 'completed' LIMIT 1",
+            [bookingUserId, row.booking_id]
+          );
+          if (paymentResult.rows.length > 0) {
+            const payment = paymentResult.rows[0].payload;
+            if (payment.paystackReference) {
+              await this.paystackService.refundTransaction(payment.paystackReference);
+              payment.status = "refunded";
+              payment.updatedAt = new Date().toISOString();
+              await client.query(
+                "UPDATE payments SET status = $1, payload = $2, updated_at = NOW() WHERE id = $3",
+                [payment.status, payment, payment.id]
+              );
+              await client.query(
+                "UPDATE booking_support_requests SET refund_status = 'processed', updated_at = NOW() WHERE id = $1",
+                [requestId]
+              );
+            }
+          }
+
+          // Record late cancellation incident
+          await this.appendAuditLog(row.booking_id, opsId, "ops", "cancellation_approved", { notes, refundProcessed: true }, client);
+
+          // Notify user
+          const state = await this.loadState(bookingUserId, client);
+          await this.pushNotification(bookingUserId, state, "Cancellation approved", "Your cancellation request has been approved. A refund is being processed.", "Cancellation", client);
+          await this.saveState(bookingUserId, state, client);
+        }
+      } else if (row.type === "reschedule") {
+        await this.appendAuditLog(row.booking_id, opsId, "ops", "reschedule_approved", { notes }, client);
+        
+        const state = await this.loadState(row.user_id, client);
+        await this.pushNotification(row.user_id, state, "Reschedule approved", "Your reschedule request has been approved. New dates will be assigned shortly.", "Update", client);
+        await this.saveState(row.user_id, state, client);
+      }
+    });
+  }
+
+  async denySupportRequest(requestId: string, notes?: string, opsUserId?: string) {
+    const opsId = opsUserId || "ops-user";
+
+    return this.database.withTransaction(async (client) => {
+      const result = await client.query<{
+        id: string;
+        booking_id: string;
+        user_id: string;
+        type: string;
+        status: string;
+      }>(
+        "SELECT id, booking_id, user_id, type, status FROM booking_support_requests WHERE id = $1",
+        [requestId]
+      );
+
+      if (result.rows.length === 0) {
+        throw new Error("Support request not found");
+      }
+
+      const row = result.rows[0];
+      if (row.status === "approved" || row.status === "denied") {
+        throw new Error(`Support request already ${row.status}`);
+      }
+
+      await client.query(
+        "UPDATE booking_support_requests SET status = $1, resolution_notes = $2, resolved_by = $3, updated_at = NOW() WHERE id = $4",
+        ["denied", notes || "Denied by ops", opsId, requestId]
+      );
+
+      await this.appendAuditLog(row.booking_id, opsId, "ops", `${row.type}_denied`, { notes }, client);
+
+      const state = await this.loadState(row.user_id, client);
+      await this.pushNotification(
+        row.user_id,
+        state,
+        `${row.type === "cancellation" ? "Cancellation" : "Reschedule"} denied`,
+        notes || "Your request has been reviewed and denied. Please contact support for details.",
+        "Update",
+        client
+      );
+      await this.saveState(row.user_id, state, client);
+    });
+  }
+
+  async forceCancel(bookingId: string, reason?: string, opsUserId?: string) {
+    const opsId = opsUserId || "ops-user";
+
+    return this.database.withTransaction(async (client) => {
+      const bookingResult = await client.query<{ payload: DateBooking; user_id: string }>(
+        "SELECT payload, user_id FROM bookings WHERE id = $1",
+        [bookingId]
+      );
+      if (bookingResult.rows.length === 0) {
+        throw new Error("Booking not found");
+      }
+
+      const booking = bookingResult.rows[0].payload;
+      const bookingUserId = bookingResult.rows[0].user_id;
+
+      if (booking.status === "cancelled") {
+        throw new Error("Booking is already cancelled");
+      }
+
+      booking.status = "cancelled";
+      booking.cancellationReason = reason || "Force-cancelled by ops";
+      booking.cancelledAt = new Date().toISOString();
+      booking.updatedAt = new Date().toISOString();
+      await client.query(
+        "UPDATE bookings SET payload = $1, updated_at = NOW() WHERE id = $2",
+        [booking, bookingId]
+      );
+
+      await this.appendAuditLog(bookingId, opsId, "ops", "force_cancelled", { reason }, client);
+
+      const state = await this.loadState(bookingUserId, client);
+      await this.pushNotification(bookingUserId, state, "Booking cancelled", reason || "Your booking has been cancelled by support.", "Cancellation", client);
+      await this.saveState(bookingUserId, state, client);
+
+      // Send WhatsApp/SMS cancellation notice
+      try {
+        const phoneNumber = state.accountSettings?.phoneNumber || "";
+        if (phoneNumber) {
+          await this.reminderService.sendCancellationNotice(bookingUserId, booking, phoneNumber);
+        }
+      } catch (reminderErr) {
+        console.error("⚠️  Failed to send cancellation reminder:", reminderErr);
+      }
+
+      return { cancelled: true, bookingId };
+    });
+  }
+
+  async getBookingAuditLog(bookingId: string) {
+    const result = await this.database.query<{
+      id: string;
+      booking_id: string;
+      actor_id: string;
+      actor_type: string;
+      action: string;
+      details: Record<string, unknown> | null;
+      created_at: string;
+    }>(
+      "SELECT id, booking_id, actor_id, actor_type, action, details, created_at FROM booking_audit_log WHERE booking_id = $1 ORDER BY created_at ASC",
+      [bookingId]
+    );
+
+    return result.rows.map((r) => ({
+      id: r.id,
+      bookingId: r.booking_id,
+      actorId: r.actor_id,
+      actorType: r.actor_type as "user" | "ops" | "system",
+      action: r.action,
+      details: r.details,
+      createdAt: r.created_at
+    } as BookingAuditEntry));
   }
 
   // Freeze Policy Engine

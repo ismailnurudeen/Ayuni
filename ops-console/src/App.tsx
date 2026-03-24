@@ -65,6 +65,21 @@ type DateBooking = {
   updatedAt: string;
 };
 
+type BookingSupportRequest = {
+  id: string;
+  bookingId: string;
+  userId: string;
+  type: "cancellation" | "reschedule";
+  reason?: string;
+  status: "requested" | "under_review" | "approved" | "denied";
+  refundStatus?: string;
+  newAvailability?: string[];
+  resolutionNotes?: string;
+  resolvedBy?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type OpsDashboard = {
   overview: {
     pendingReports: number;
@@ -76,6 +91,7 @@ type OpsDashboard = {
     pendingSelfieReviews: number;
     pendingGovIdReviews: number;
     activeFreezes: number;
+    pendingSupportRequests: number;
   };
   featureToggles: {
     requireGovIdForBooking: boolean;
@@ -123,6 +139,7 @@ type OpsDashboard = {
     tokenLossPenalties: number;
   };
   venueNetwork: VenuePartner[];
+  supportQueue: BookingSupportRequest[];
   bookings: DateBooking[];
   reactions: Array<{
     profileId: string;
@@ -134,6 +151,21 @@ type OpsDashboard = {
 
 // API Configuration
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:3000/v1";
+
+type ReminderLog = {
+  id: string;
+  userId: string;
+  bookingId?: string;
+  channel: "whatsapp" | "sms";
+  templateId: string;
+  phoneNumber: string;
+  status: "sent" | "delivered" | "read" | "failed";
+  failureReason?: string;
+  sentAt: string;
+  deliveredAt?: string;
+  readAt?: string;
+  failedAt?: string;
+};
 
 export function App() {
   const [dashboard, setDashboard] = useState<OpsDashboard | null>(null);
@@ -152,6 +184,10 @@ export function App() {
     name: "", city: "Lagos", area: "", address: "", type: "Cafe",
     capacity: 20, contactPhone: "", contactEmail: ""
   });
+
+  // Delivery log state
+  const [deliveryLogs, setDeliveryLogs] = useState<ReminderLog[]>([]);
+  const [deliveryLogFilter, setDeliveryLogFilter] = useState<string>("");
 
   const fetchDashboard = async () => {
     try {
@@ -176,7 +212,29 @@ export function App() {
 
   useEffect(() => {
     fetchDashboard();
+    fetchDeliveryLogs();
   }, []);
+
+  const fetchDeliveryLogs = async () => {
+    try {
+      const params = new URLSearchParams();
+      if (deliveryLogFilter) params.set("status", deliveryLogFilter);
+      params.set("limit", "50");
+      const qs = params.toString();
+      const response = await fetch(`${API_BASE}/ops/delivery-logs${qs ? `?${qs}` : ""}`, {
+        headers: { "x-user-id": "ops-user" }
+      });
+      if (!response.ok) throw new Error("Failed to fetch delivery logs");
+      const data = await response.json();
+      setDeliveryLogs(data);
+    } catch (err) {
+      console.error("Error fetching delivery logs:", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchDeliveryLogs();
+  }, [deliveryLogFilter]);
 
   // ── Venue Management Handlers ────────────────────────────────────
 
@@ -1073,6 +1131,55 @@ export function App() {
                     <span style={{ fontSize: "0.8rem", color: "orange" }}>⚠ Escalated</span>
                   )}
                 </div>
+              </div>
+            ))
+          )}
+        </article>
+
+        <article className="panel">
+          <h2>Delivery Logs ({deliveryLogs.length})</h2>
+          <div style={{ marginBottom: "1rem", display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+            {["", "sent", "delivered", "read", "failed"].map(f => (
+              <button
+                key={f}
+                onClick={() => setDeliveryLogFilter(f)}
+                style={{
+                  padding: "0.3rem 0.6rem",
+                  fontSize: "0.8rem",
+                  backgroundColor: deliveryLogFilter === f ? "#C17F5F" : "#eee",
+                  color: deliveryLogFilter === f ? "white" : "#333",
+                  border: "none",
+                  borderRadius: "4px",
+                  cursor: "pointer"
+                }}
+              >
+                {f || "All"}
+              </button>
+            ))}
+          </div>
+          {deliveryLogs.length === 0 ? (
+            <p style={{ opacity: 0.6, fontStyle: "italic" }}>No delivery logs</p>
+          ) : (
+            deliveryLogs.map((log) => (
+              <div key={log.id} className="row" style={{ borderBottom: "1px solid #eee", paddingBottom: "0.75rem", marginBottom: "0.75rem" }}>
+                <div>
+                  <strong style={{ textTransform: "capitalize" }}>{log.channel}</strong>
+                  <span style={{ marginLeft: "0.5rem", fontSize: "0.85rem", opacity: 0.7 }}>
+                    {log.templateId.replace(/_/g, " ")}
+                  </span>
+                  <p style={{ fontSize: "0.85rem", margin: "0.25rem 0" }}>
+                    {log.phoneNumber} • User: {log.userId.slice(0, 12)}...
+                  </p>
+                  <small>{new Date(log.sentAt).toLocaleString()}</small>
+                  {log.failureReason && (
+                    <p style={{ fontSize: "0.8rem", color: "#dc3545", margin: "0.25rem 0 0" }}>
+                      {log.failureReason}
+                    </p>
+                  )}
+                </div>
+                <span className={`pill ${log.status === "delivered" || log.status === "read" ? "ready" : log.status === "failed" ? "paused" : "waitlist"}`}>
+                  {log.status}
+                </span>
               </div>
             ))
           )}
