@@ -201,9 +201,75 @@ export const suggestionFixtures: SuggestionProfile[] = [
 ];
 
 export const venueFixtures: VenuePartner[] = [
-  { id: "venue-1", name: "The Lobby, Victoria Island", city: "Lagos", area: "Victoria Island", type: "HotelLobby", readiness: "ready" },
-  { id: "venue-2", name: "Maple Cafe, Wuse II", city: "Abuja", area: "Wuse II", type: "Cafe", readiness: "waitlist" },
-  { id: "venue-3", name: "Cocoa Rooms, Lekki", city: "Lagos", area: "Lekki", type: "DessertSpot", readiness: "ready" }
+  {
+    id: "venue-1",
+    name: "The Lobby, Victoria Island",
+    city: "Lagos",
+    area: "Victoria Island",
+    address: "Adetokunbo Ademola Street, Victoria Island, Lagos",
+    type: "HotelLobby",
+    status: "active",
+    capacity: 15,
+    contactPhone: "+2348012345001",
+    contactEmail: "reservations@thelobbyvi.ng",
+    operatingHours: {
+      monday: { open: "10:00", close: "22:00" },
+      tuesday: { open: "10:00", close: "22:00" },
+      wednesday: { open: "10:00", close: "22:00" },
+      thursday: { open: "10:00", close: "22:00" },
+      friday: { open: "10:00", close: "23:00" },
+      saturday: { open: "10:00", close: "23:00" },
+      sunday: { open: "12:00", close: "21:00" }
+    },
+    blackoutDates: [],
+    readiness: "ready"
+  },
+  {
+    id: "venue-2",
+    name: "Maple Cafe, Wuse II",
+    city: "Abuja",
+    area: "Wuse II",
+    address: "Aminu Kano Crescent, Wuse II, Abuja",
+    type: "Cafe",
+    status: "active",
+    capacity: 12,
+    contactPhone: "+2348012345002",
+    contactEmail: "info@maplecafe.ng",
+    operatingHours: {
+      monday: { open: "08:00", close: "21:00" },
+      tuesday: { open: "08:00", close: "21:00" },
+      wednesday: { open: "08:00", close: "21:00" },
+      thursday: { open: "08:00", close: "21:00" },
+      friday: { open: "08:00", close: "22:00" },
+      saturday: { open: "09:00", close: "22:00" },
+      sunday: { open: "10:00", close: "20:00" }
+    },
+    blackoutDates: [],
+    readiness: "ready"
+  },
+  {
+    id: "venue-3",
+    name: "Cocoa Rooms, Lekki",
+    city: "Lagos",
+    area: "Lekki",
+    address: "Admiralty Way, Lekki Phase 1, Lagos",
+    type: "DessertSpot",
+    status: "active",
+    capacity: 20,
+    contactPhone: "+2348012345003",
+    contactEmail: "hello@cocoarooms.ng",
+    operatingHours: {
+      monday: { open: "11:00", close: "22:00" },
+      tuesday: { open: "11:00", close: "22:00" },
+      wednesday: { open: "11:00", close: "22:00" },
+      thursday: { open: "11:00", close: "22:00" },
+      friday: { open: "11:00", close: "23:00" },
+      saturday: { open: "11:00", close: "23:00" },
+      sunday: { open: "12:00", close: "21:00" }
+    },
+    blackoutDates: [],
+    readiness: "ready"
+  }
 ];
 
 const demoSafety: SafetyState = {

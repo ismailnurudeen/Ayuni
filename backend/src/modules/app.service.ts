@@ -13,6 +13,7 @@ import {
   BasicOnboardingPayload,
   BootstrapPayload,
   City,
+  CreateVenuePayload,
   DateBooking,
   DatingPreferences,
   EditableProfile,
@@ -20,6 +21,7 @@ import {
   MatchroundState,
   NotificationCategory,
   OpsDashboard,
+  OperatingHours,
   PaymentMethod,
   PaymentRecord,
   ProfileMedia,
@@ -28,8 +30,13 @@ import {
   SafetyIncident,
   AccountFreeze,
   SuggestionProfile,
+  UpdateVenuePayload,
   UserStateRecord,
+  VenueDetail,
+  VenueListFilter,
   VenuePartner,
+  VenueStatus,
+  VenueTimeSlot,
   VerificationStatus
 } from "./app.types";
 import { createInitialUserState, demoBookings, demoNotifications, demoReports, suggestionFixtures, venueFixtures } from "./demo-data";
@@ -816,23 +823,32 @@ export class AppService implements OnModuleInit {
       
       let finalBooking: DateBooking;
       
+      // Smart venue assignment: prefer user's area preferences, check capacity
+      const preferredAreas = state.datingPreferences.dateAreas || [];
+      
       if (existingBooking && (existingBooking.status === "availability_submitted" || existingBooking.status === "payment_pending")) {
-        // Update existing booking to confirmed status with venue assignment
+        // Update existing booking to confirmed status with smart venue assignment
+        const assignedVenue = await this.assignVenueForBooking(existingBooking, preferredAreas, client);
         existingBooking.status = "confirmed";
-        existingBooking.bothPaid = true; // In P0-09 this will be set after payment webhook
-        existingBooking.venueName = profile.city === "Abuja" ? "Maple Cafe, Wuse II" : "Cocoa Rooms, Lekki";
-        existingBooking.venueAddress = profile.city === "Abuja" ? "Aminu Kano Crescent, Wuse II" : "Admiralty Way, Lekki";
-        existingBooking.startAt = "2026-03-24T19:00:00+01:00"; // This would be scheduled based on availability
+        existingBooking.bothPaid = true;
+        if (assignedVenue) {
+          existingBooking.venueName = assignedVenue.name;
+          existingBooking.venueAddress = assignedVenue.address;
+        } else {
+          existingBooking.venueName = profile.city === "Abuja" ? "Maple Cafe, Wuse II" : "Cocoa Rooms, Lekki";
+          existingBooking.venueAddress = profile.city === "Abuja" ? "Aminu Kano Crescent, Wuse II" : "Admiralty Way, Lekki";
+        }
+        existingBooking.startAt = existingBooking.startAt || "2026-03-24T19:00:00+01:00";
         existingBooking.updatedAt = new Date().toISOString();
         finalBooking = existingBooking;
         await this.saveBooking(userId, finalBooking, client);
       } else {
-        // Create new booking directly (for backward compatibility)
-        const nextBooking: DateBooking = {
+        // Create new booking directly with smart venue assignment
+        const tempBooking: DateBooking = {
           id: `book-${state.nextBookingId++}`,
           matchId: matchId,
           status: "confirmed",
-          venueName: profile.city === "Abuja" ? "Maple Cafe, Wuse II" : "Cocoa Rooms, Lekki",
+          venueName: "",
           city: profile.city,
           dateType: profile.preferredDateType,
           startAt: "2026-03-24T19:00:00+01:00",
@@ -841,17 +857,26 @@ export class AppService implements OnModuleInit {
           tokenAmountNgn: 3500,
           bothPaid: true,
           counterpartName: profile.displayName,
-          venueAddress: profile.city === "Abuja" ? "Aminu Kano Crescent, Wuse II" : "Admiralty Way, Lekki",
+          venueAddress: "",
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         };
 
+        const assignedVenue = await this.assignVenueForBooking(tempBooking, preferredAreas, client);
+        if (assignedVenue) {
+          tempBooking.venueName = assignedVenue.name;
+          tempBooking.venueAddress = assignedVenue.address;
+        } else {
+          tempBooking.venueName = profile.city === "Abuja" ? "Maple Cafe, Wuse II" : "Cocoa Rooms, Lekki";
+          tempBooking.venueAddress = profile.city === "Abuja" ? "Aminu Kano Crescent, Wuse II" : "Admiralty Way, Lekki";
+        }
+
         await client.query(
           `INSERT INTO bookings (id, user_id, payload, created_at, updated_at)
            VALUES ($1, $2, $3, NOW(), NOW())`,
-          [nextBooking.id, userId, nextBooking]
+          [tempBooking.id, userId, tempBooking]
         );
-        finalBooking = nextBooking;
+        finalBooking = tempBooking;
       }
       
       await this.pushNotification(
@@ -1031,7 +1056,7 @@ export class AppService implements OnModuleInit {
       this.loadBookings(userId),
       this.loadRoundSuggestions(userId),
       this.loadReactions(userId),
-      this.loadVenues()
+      this.loadAllVenues()
     ]);
 
     // Fetch pending selfie submissions
@@ -1117,7 +1142,7 @@ export class AppService implements OnModuleInit {
     return {
       overview: {
         pendingReports: reports.filter((item) => item.status === "open").length,
-        activeVenueCount: venues.filter((item) => item.readiness === "ready").length,
+        activeVenueCount: venues.filter((item) => item.status === "active" || item.readiness === "ready").length,
         totalAcceptedThisRound: Object.values(reactions).filter((item) => item === "Accepted").length,
         totalDeclinedThisRound: Object.values(reactions).filter((item) => item === "Declined").length,
         onboardingCompleted: state.onboarding.completed,
@@ -1223,16 +1248,299 @@ export class AppService implements OnModuleInit {
 
   async toggleVenue(venueId: string) {
     await this.database.withTransaction(async (client) => {
-      const row = await client.query<{ payload: VenuePartner }>("SELECT payload FROM venues WHERE id = $1", [venueId]);
+      const row = await client.query<{ status: string; payload: VenuePartner }>("SELECT status, payload FROM venues WHERE id = $1", [venueId]);
       const venue = row.rows[0]?.payload;
+      const currentStatus = row.rows[0]?.status;
       if (!venue) {
         return;
       }
-      venue.readiness = venue.readiness === "ready" ? "paused" : "ready";
-      await client.query("UPDATE venues SET readiness = $2, payload = $3 WHERE id = $1", [venueId, venue.readiness, venue]);
+      const newStatus = currentStatus === "active" ? "inactive" : "active";
+      const newReadiness = newStatus === "active" ? "ready" : "paused";
+      venue.readiness = newReadiness;
+      venue.status = newStatus as VenueStatus;
+      await client.query(
+        "UPDATE venues SET status = $2, readiness = $3, payload = $4, updated_at = NOW() WHERE id = $1",
+        [venueId, newStatus, newReadiness, venue]
+      );
     });
 
     return this.getOpsDashboard();
+  }
+
+  // ── Venue Management (P1-04) ──────────────────────────────────────────
+
+  async createVenue(payload: CreateVenuePayload): Promise<VenuePartner> {
+    const venueId = `venue-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+    const defaultHours: OperatingHours = payload.operatingHours || {
+      monday: { open: "10:00", close: "22:00" },
+      tuesday: { open: "10:00", close: "22:00" },
+      wednesday: { open: "10:00", close: "22:00" },
+      thursday: { open: "10:00", close: "22:00" },
+      friday: { open: "10:00", close: "23:00" },
+      saturday: { open: "10:00", close: "23:00" },
+      sunday: { open: "12:00", close: "21:00" }
+    };
+
+    const venue: VenuePartner = {
+      id: venueId,
+      name: payload.name,
+      city: payload.city,
+      area: payload.area,
+      address: payload.address,
+      type: payload.type,
+      status: "active",
+      capacity: payload.capacity,
+      contactPhone: payload.contactPhone || "",
+      contactEmail: payload.contactEmail || "",
+      operatingHours: defaultHours,
+      blackoutDates: [],
+      readiness: "ready"
+    };
+
+    await this.database.withTransaction(async (client) => {
+      await client.query(
+        `INSERT INTO venues (id, city, readiness, payload, name, address, area, venue_type, status, capacity, contact_phone, contact_email, operating_hours, blackout_dates, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())`,
+        [
+          venueId, payload.city, "ready", venue,
+          payload.name, payload.address, payload.area, payload.type,
+          "active", payload.capacity,
+          payload.contactPhone || "", payload.contactEmail || "",
+          defaultHours, JSON.stringify([])
+        ]
+      );
+    });
+
+    return venue;
+  }
+
+  async updateVenue(venueId: string, updates: UpdateVenuePayload): Promise<VenuePartner | null> {
+    return this.database.withTransaction(async (client) => {
+      const row = await client.query<{ payload: VenuePartner }>("SELECT payload FROM venues WHERE id = $1", [venueId]);
+      if (row.rows.length === 0) return null;
+
+      const venue = row.rows[0].payload;
+
+      if (updates.name !== undefined) venue.name = updates.name;
+      if (updates.address !== undefined) venue.address = updates.address;
+      if (updates.area !== undefined) venue.area = updates.area;
+      if (updates.type !== undefined) venue.type = updates.type;
+      if (updates.capacity !== undefined) venue.capacity = updates.capacity;
+      if (updates.contactPhone !== undefined) venue.contactPhone = updates.contactPhone;
+      if (updates.contactEmail !== undefined) venue.contactEmail = updates.contactEmail;
+      if (updates.operatingHours !== undefined) venue.operatingHours = updates.operatingHours;
+      if (updates.blackoutDates !== undefined) venue.blackoutDates = updates.blackoutDates;
+      if (updates.status !== undefined) {
+        venue.status = updates.status;
+        venue.readiness = updates.status === "active" ? "ready" : "paused";
+      }
+
+      await client.query(
+        `UPDATE venues SET
+           payload = $2, name = $3, address = $4, area = $5, venue_type = $6,
+           status = $7, readiness = $8, capacity = $9, contact_phone = $10,
+           contact_email = $11, operating_hours = $12, blackout_dates = $13,
+           updated_at = NOW()
+         WHERE id = $1`,
+        [
+          venueId, venue, venue.name, venue.address, venue.area, venue.type,
+          venue.status, venue.readiness, venue.capacity, venue.contactPhone,
+          venue.contactEmail, venue.operatingHours, JSON.stringify(venue.blackoutDates)
+        ]
+      );
+
+      return venue;
+    });
+  }
+
+  async getVenueDetail(venueId: string): Promise<VenueDetail | null> {
+    const row = await this.database.query<{ payload: VenuePartner }>(
+      "SELECT payload FROM venues WHERE id = $1",
+      [venueId]
+    );
+    if (row.rows.length === 0) return null;
+
+    const venue = row.rows[0].payload;
+
+    // Load recent bookings at this venue
+    const bookingRows = await this.database.query<{ payload: DateBooking }>(
+      `SELECT b.payload FROM bookings b
+       WHERE b.payload->>'venueName' ILIKE $1
+       ORDER BY b.created_at DESC LIMIT 20`,
+      [`%${venue.name}%`]
+    );
+    const recentBookings = bookingRows.rows.map(r => r.payload);
+
+    // Load time slots
+    const slotRows = await this.database.query<{
+      id: string; venue_id: string; slot_date: string; start_time: string;
+      end_time: string; max_capacity: number; booked_count: number;
+    }>(
+      `SELECT id, venue_id, slot_date, start_time, end_time, max_capacity, booked_count
+       FROM venue_time_slots WHERE venue_id = $1 AND slot_date >= CURRENT_DATE
+       ORDER BY slot_date, start_time LIMIT 50`,
+      [venueId]
+    );
+    const timeSlots: VenueTimeSlot[] = slotRows.rows.map(r => ({
+      id: r.id,
+      venueId: r.venue_id,
+      slotDate: r.slot_date,
+      startTime: r.start_time,
+      endTime: r.end_time,
+      maxCapacity: r.max_capacity,
+      bookedCount: r.booked_count
+    }));
+
+    return { ...venue, recentBookings, timeSlots };
+  }
+
+  async listVenues(filters: VenueListFilter = {}): Promise<VenuePartner[]> {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    let paramIdx = 1;
+
+    if (filters.status) {
+      conditions.push(`status = $${paramIdx++}`);
+      params.push(filters.status);
+    }
+    if (filters.area) {
+      conditions.push(`area ILIKE $${paramIdx++}`);
+      params.push(`%${filters.area}%`);
+    }
+    if (filters.type) {
+      conditions.push(`venue_type = $${paramIdx++}`);
+      params.push(filters.type);
+    }
+    if (filters.city) {
+      conditions.push(`city = $${paramIdx++}`);
+      params.push(filters.city);
+    }
+    if (filters.search) {
+      conditions.push(`(name ILIKE $${paramIdx} OR address ILIKE $${paramIdx} OR area ILIKE $${paramIdx})`);
+      params.push(`%${filters.search}%`);
+      paramIdx++;
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const result = await this.database.query<{ payload: VenuePartner }>(
+      `SELECT payload FROM venues ${whereClause} ORDER BY created_at ASC`,
+      params
+    );
+    return result.rows.map(r => r.payload);
+  }
+
+  async setVenueStatus(venueId: string, status: VenueStatus): Promise<VenuePartner | null> {
+    return this.updateVenue(venueId, { status });
+  }
+
+  async checkVenueAvailability(venueId: string, slotDate: string, startTime: string): Promise<{ available: boolean; remainingCapacity: number }> {
+    const venueRow = await this.database.query<{ status: string; capacity: number }>(
+      "SELECT status, capacity FROM venues WHERE id = $1",
+      [venueId]
+    );
+    if (venueRow.rows.length === 0) return { available: false, remainingCapacity: 0 };
+    const { status, capacity } = venueRow.rows[0];
+    if (status !== "active") return { available: false, remainingCapacity: 0 };
+
+    // Check blackout dates
+    const blackoutRow = await this.database.query<{ blackout_dates: string[] }>(
+      "SELECT blackout_dates FROM venues WHERE id = $1",
+      [venueId]
+    );
+    const blackoutDates: string[] = blackoutRow.rows[0]?.blackout_dates || [];
+    if (blackoutDates.includes(slotDate)) return { available: false, remainingCapacity: 0 };
+
+    // Check time slot capacity
+    const slotRow = await this.database.query<{ booked_count: number; max_capacity: number }>(
+      `SELECT booked_count, max_capacity FROM venue_time_slots
+       WHERE venue_id = $1 AND slot_date = $2 AND start_time = $3`,
+      [venueId, slotDate, startTime]
+    );
+
+    if (slotRow.rows.length === 0) {
+      // No slot exists yet — full capacity available
+      return { available: true, remainingCapacity: capacity };
+    }
+
+    const remaining = slotRow.rows[0].max_capacity - slotRow.rows[0].booked_count;
+    return { available: remaining > 0, remainingCapacity: Math.max(0, remaining) };
+  }
+
+  async reserveVenueSlot(
+    venueId: string, slotDate: string, startTime: string, endTime: string,
+    client: PoolClient
+  ): Promise<boolean> {
+    const venueRow = await client.query<{ capacity: number; status: string }>(
+      "SELECT capacity, status FROM venues WHERE id = $1",
+      [venueId]
+    );
+    if (venueRow.rows.length === 0 || venueRow.rows[0].status !== "active") return false;
+    const maxCap = venueRow.rows[0].capacity;
+
+    const slotId = `slot-${venueId}-${slotDate}-${startTime}`;
+
+    // Check if slot exists
+    const existing = await client.query<{ booked_count: number; max_capacity: number }>(
+      "SELECT booked_count, max_capacity FROM venue_time_slots WHERE venue_id = $1 AND slot_date = $2 AND start_time = $3",
+      [venueId, slotDate, startTime]
+    );
+
+    if (existing.rows.length === 0) {
+      // Create new slot with first booking
+      await client.query(
+        `INSERT INTO venue_time_slots (id, venue_id, slot_date, start_time, end_time, max_capacity, booked_count)
+         VALUES ($1, $2, $3, $4, $5, $6, 1)`,
+        [slotId, venueId, slotDate, startTime, endTime, maxCap]
+      );
+      return true;
+    }
+
+    // Slot exists — check capacity before incrementing
+    const { booked_count, max_capacity } = existing.rows[0];
+    if (booked_count >= max_capacity) {
+      return false;
+    }
+
+    await client.query(
+      `UPDATE venue_time_slots SET booked_count = booked_count + 1, updated_at = NOW()
+       WHERE venue_id = $1 AND slot_date = $2 AND start_time = $3`,
+      [venueId, slotDate, startTime]
+    );
+    return true;
+  }
+
+  async assignVenueForBooking(
+    booking: DateBooking,
+    preferredAreas: string[],
+    client: PoolClient
+  ): Promise<VenuePartner | null> {
+    // Find active venues matching city and date type, preferring user's preferred areas
+    const venueRows = await client.query<{ payload: VenuePartner }>(
+      `SELECT payload FROM venues
+       WHERE city = $1 AND status = 'active'
+       ORDER BY
+         CASE WHEN area = ANY($2::text[]) THEN 0 ELSE 1 END,
+         created_at ASC`,
+      [booking.city, preferredAreas.length > 0 ? preferredAreas : [""]]
+    );
+
+    const slotDate = booking.startAt ? booking.startAt.substring(0, 10) : new Date().toISOString().substring(0, 10);
+    const startTime = booking.startAt ? booking.startAt.substring(11, 16) : "19:00";
+    const endTime = "21:00"; // Default 2-hour slot
+
+    for (const row of venueRows.rows) {
+      const venue = row.payload;
+      // Skip venues on blackout
+      if (venue.blackoutDates?.includes(slotDate)) continue;
+
+      // Try to reserve a slot
+      const reserved = await this.reserveVenueSlot(venue.id, slotDate, startTime, endTime, client);
+      if (reserved) {
+        return venue;
+      }
+    }
+
+    return null;
   }
 
   async approveSelfie(submissionId: string, opsUserId?: string) {
@@ -1571,12 +1879,17 @@ export class AppService implements OnModuleInit {
     if (existingVenues.rows[0]?.count === "0") {
       await this.database.withTransaction(async (client) => {
         for (const venue of venueFixtures) {
-          await client.query("INSERT INTO venues (id, city, readiness, payload) VALUES ($1, $2, $3, $4)", [
-            venue.id,
-            venue.city,
-            venue.readiness,
-            venue
-          ]);
+          await client.query(
+            `INSERT INTO venues (id, city, readiness, payload, name, address, area, venue_type, status, capacity, contact_phone, contact_email, operating_hours, blackout_dates)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+            [
+              venue.id, venue.city, venue.readiness, venue,
+              venue.name, venue.address || "", venue.area, venue.type,
+              venue.status || "active", venue.capacity || 20,
+              venue.contactPhone || "", venue.contactEmail || "",
+              venue.operatingHours || {}, JSON.stringify(venue.blackoutDates || [])
+            ]
+          );
         }
       });
     }
@@ -2037,6 +2350,11 @@ export class AppService implements OnModuleInit {
   }
 
   private async loadVenues(queryable: Queryable = this.database as Queryable) {
+    const result = await queryable.query<{ payload: VenuePartner }>("SELECT payload FROM venues WHERE status = 'active' OR status IS NULL ORDER BY created_at ASC");
+    return result.rows.map((row: { payload: VenuePartner }) => row.payload);
+  }
+
+  private async loadAllVenues(queryable: Queryable = this.database as Queryable) {
     const result = await queryable.query<{ payload: VenuePartner }>("SELECT payload FROM venues ORDER BY created_at ASC");
     return result.rows.map((row: { payload: VenuePartner }) => row.payload);
   }

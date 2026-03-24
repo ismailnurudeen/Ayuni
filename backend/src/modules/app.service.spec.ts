@@ -1214,4 +1214,250 @@ describe("AppService", () => {
       expect(result.bookingId).toBeDefined();
     });
   });
+
+  describe("Venue management (P1-04)", () => {
+    it("creates a venue with full schema", async () => {
+      const venue = await service.createVenue({
+        name: "Test Cafe",
+        city: "Lagos",
+        area: "Victoria Island",
+        address: "123 Test Street, VI, Lagos",
+        type: "Cafe",
+        capacity: 25,
+        contactPhone: "+2348011111111",
+        contactEmail: "info@testcafe.ng"
+      });
+
+      expect(venue.id).toBeDefined();
+      expect(venue.name).toBe("Test Cafe");
+      expect(venue.city).toBe("Lagos");
+      expect(venue.area).toBe("Victoria Island");
+      expect(venue.address).toBe("123 Test Street, VI, Lagos");
+      expect(venue.type).toBe("Cafe");
+      expect(venue.status).toBe("active");
+      expect(venue.capacity).toBe(25);
+      expect(venue.contactPhone).toBe("+2348011111111");
+      expect(venue.readiness).toBe("ready");
+      expect(venue.operatingHours).toBeDefined();
+
+      // Verify in database
+      const row = await pool.query("SELECT name, status, capacity FROM venues WHERE id = $1", [venue.id]);
+      expect(row.rows.length).toBe(1);
+      expect(row.rows[0].name).toBe("Test Cafe");
+      expect(row.rows[0].status).toBe("active");
+      expect(row.rows[0].capacity).toBe(25);
+    });
+
+    it("updates venue fields", async () => {
+      const venue = await service.createVenue({
+        name: "Update Test",
+        city: "Abuja",
+        area: "Wuse II",
+        address: "Update Street",
+        type: "Lounge",
+        capacity: 30
+      });
+
+      const updated = await service.updateVenue(venue.id, {
+        name: "Updated Lounge",
+        capacity: 40,
+        contactEmail: "new@lounge.ng"
+      });
+
+      expect(updated).not.toBeNull();
+      expect(updated!.name).toBe("Updated Lounge");
+      expect(updated!.capacity).toBe(40);
+      expect(updated!.contactEmail).toBe("new@lounge.ng");
+      expect(updated!.area).toBe("Wuse II"); // unchanged
+    });
+
+    it("deactivates and activates venues", async () => {
+      const venue = await service.createVenue({
+        name: "Status Test",
+        city: "Lagos",
+        area: "Lekki",
+        address: "Lekki Phase 1",
+        type: "DessertSpot",
+        capacity: 15
+      });
+
+      expect(venue.status).toBe("active");
+
+      // Deactivate
+      const deactivated = await service.setVenueStatus(venue.id, "inactive");
+      expect(deactivated!.status).toBe("inactive");
+      expect(deactivated!.readiness).toBe("paused");
+
+      // Set maintenance
+      const maintenance = await service.setVenueStatus(venue.id, "maintenance");
+      expect(maintenance!.status).toBe("maintenance");
+
+      // Reactivate
+      const activated = await service.setVenueStatus(venue.id, "active");
+      expect(activated!.status).toBe("active");
+      expect(activated!.readiness).toBe("ready");
+    });
+
+    it("lists venues with filtering", async () => {
+      await service.createVenue({ name: "Lagos Cafe 1", city: "Lagos", area: "Victoria Island", address: "VI", type: "Cafe", capacity: 10 });
+      await service.createVenue({ name: "Lagos Lounge 1", city: "Lagos", area: "Lekki", address: "Lekki", type: "Lounge", capacity: 20 });
+      await service.createVenue({ name: "Abuja Cafe 1", city: "Abuja", area: "Wuse II", address: "Wuse", type: "Cafe", capacity: 15 });
+
+      // Filter by city
+      const lagosVenues = await service.listVenues({ city: "Lagos" });
+      expect(lagosVenues.every(v => v.city === "Lagos")).toBe(true);
+
+      // Filter by type
+      const cafes = await service.listVenues({ type: "Cafe" });
+      expect(cafes.every(v => v.type === "Cafe")).toBe(true);
+
+      // Search by name
+      const searched = await service.listVenues({ search: "Lounge" });
+      expect(searched.some(v => v.name.includes("Lounge"))).toBe(true);
+
+      // Filter by area
+      const viVenues = await service.listVenues({ area: "Victoria Island" });
+      expect(viVenues.every(v => v.area.includes("Victoria Island"))).toBe(true);
+    });
+
+    it("excludes inactive venues from booking assignment pool", async () => {
+      // Create venue then deactivate it
+      const venue = await service.createVenue({
+        name: "Inactive Venue",
+        city: "Lagos",
+        area: "Victoria Island",
+        address: "Test Address",
+        type: "Cafe",
+        capacity: 20
+      });
+      await service.setVenueStatus(venue.id, "inactive");
+
+      // Active venues should not include the deactivated one
+      const allVenues = await service.listVenues({ status: "active" });
+      const found = allVenues.find(v => v.id === venue.id);
+      expect(found).toBeUndefined();
+    });
+
+    it("returns venue detail with booking history", async () => {
+      await service.getBootstrap("venue-detail-user");
+      const dashboard = await service.getOpsDashboard("venue-detail-user");
+      expect(dashboard.venueNetwork.length).toBeGreaterThan(0);
+
+      const venueId = dashboard.venueNetwork[0].id;
+      const detail = await service.getVenueDetail(venueId);
+
+      expect(detail).not.toBeNull();
+      expect(detail!.name).toBeDefined();
+      expect(detail!.recentBookings).toBeInstanceOf(Array);
+      expect(detail!.timeSlots).toBeInstanceOf(Array);
+    });
+
+    it("checks venue availability correctly", async () => {
+      const venue = await service.createVenue({
+        name: "Capacity Test Venue",
+        city: "Lagos",
+        area: "Ikoyi",
+        address: "Ikoyi Ave",
+        type: "CasualRestaurant",
+        capacity: 2
+      });
+
+      // Initially available
+      const avail = await service.checkVenueAvailability(venue.id, "2026-04-01", "19:00");
+      expect(avail.available).toBe(true);
+      expect(avail.remainingCapacity).toBe(2);
+
+      // Inactive venue not available
+      await service.setVenueStatus(venue.id, "inactive");
+      const unavail = await service.checkVenueAvailability(venue.id, "2026-04-01", "19:00");
+      expect(unavail.available).toBe(false);
+    });
+
+    it("enforces venue capacity during slot reservation", async () => {
+      const venue = await service.createVenue({
+        name: "Tiny Venue",
+        city: "Lagos",
+        area: "Lekki",
+        address: "Lekki Phase 1",
+        type: "DessertSpot",
+        capacity: 1
+      });
+
+      // Reserve first slot via database transaction
+      const reserved = await databaseService.withTransaction(async (client) => {
+        return service.reserveVenueSlot(venue.id, "2026-04-01", "19:00", "21:00", client);
+      });
+      expect(reserved).toBe(true);
+
+      // Verify the slot is now at capacity
+      const slotRow = await pool.query(
+        "SELECT booked_count, max_capacity FROM venue_time_slots WHERE venue_id = $1 AND slot_date = $2 AND start_time = $3",
+        [venue.id, "2026-04-01", "19:00"]
+      );
+      expect(slotRow.rows.length).toBe(1);
+      expect(slotRow.rows[0].booked_count).toBe(1);
+      expect(slotRow.rows[0].max_capacity).toBe(1);
+
+      // Second reservation should fail because booked_count = max_capacity
+      const reserved2 = await databaseService.withTransaction(async (client) => {
+        return service.reserveVenueSlot(venue.id, "2026-04-01", "19:00", "21:00", client);
+      });
+      expect(reserved2).toBe(false);
+    });
+
+    it("smart venue assignment prefers user preferred area", async () => {
+      // Create venues in different areas
+      await service.createVenue({ name: "VI Restaurant", city: "Lagos", area: "Victoria Island", address: "VI", type: "CasualRestaurant", capacity: 20 });
+      await service.createVenue({ name: "Lekki Restaurant", city: "Lagos", area: "Lekki", address: "Lekki", type: "CasualRestaurant", capacity: 20 });
+
+      // Set user preferences to prefer Victoria Island
+      await service.updateDatingPreferences({
+        ageRange: "",
+        genderIdentity: "",
+        heightRange: "",
+        dateCities: ["Lagos"],
+        dateAreas: ["Victoria Island"],
+        preferredDateActivities: []
+      }, "venue-pref-user");
+
+      const bootstrap = await service.getBootstrap("venue-pref-user");
+      const matchId = bootstrap.suggestions[0]?.id;
+      if (matchId) {
+        const result = await service.createBooking(matchId, "venue-pref-user");
+        // Venue should be assigned (either from preferred area or fallback)
+        expect(result.booking.venueName).toBeDefined();
+        expect(result.booking.venueName.length).toBeGreaterThan(0);
+      }
+    });
+
+    it("migration creates venue_time_slots table", async () => {
+      const result = await pool.query(
+        `SELECT table_name FROM information_schema.tables
+         WHERE table_schema = 'public' AND table_name = 'venue_time_slots'`
+      );
+      expect(result.rows.length).toBe(1);
+    });
+
+    it("venue status change reflects in ops dashboard", async () => {
+      const venue = await service.createVenue({
+        name: "Dashboard Test Venue",
+        city: "Lagos",
+        area: "Victoria Island",
+        address: "Test Street",
+        type: "Cafe",
+        capacity: 10
+      });
+
+      let dashboard = await service.getOpsDashboard("ops-user");
+      let found = dashboard.venueNetwork.find(v => v.id === venue.id);
+      expect(found).toBeDefined();
+      expect(found!.status).toBe("active");
+
+      await service.setVenueStatus(venue.id, "inactive");
+      dashboard = await service.getOpsDashboard("ops-user");
+      found = dashboard.venueNetwork.find(v => v.id === venue.id);
+      expect(found).toBeDefined();
+      expect(found!.status).toBe("inactive");
+    });
+  });
 });

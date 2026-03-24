@@ -219,13 +219,68 @@ export type SafetyReport = {
   resolutionNotes?: string;
 };
 
+export type VenueStatus = "active" | "inactive" | "maintenance";
+
+export type OperatingHours = {
+  [day in "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday"]?: { open: string; close: string } | null;
+};
+
+export type VenueTimeSlot = {
+  id: string;
+  venueId: string;
+  slotDate: string;
+  startTime: string;
+  endTime: string;
+  maxCapacity: number;
+  bookedCount: number;
+};
+
 export type VenuePartner = {
   id: string;
   name: string;
   city: City;
   area: string;
+  address: string;
   type: DateType;
+  status: VenueStatus;
+  capacity: number;
+  contactPhone: string;
+  contactEmail: string;
+  operatingHours: OperatingHours;
+  blackoutDates: string[];
   readiness: "ready" | "waitlist" | "paused";
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type CreateVenuePayload = {
+  name: string;
+  city: City;
+  area: string;
+  address: string;
+  type: DateType;
+  capacity: number;
+  contactPhone?: string;
+  contactEmail?: string;
+  operatingHours?: OperatingHours;
+};
+
+export type UpdateVenuePayload = Partial<Omit<CreateVenuePayload, "city">> & {
+  status?: VenueStatus;
+  blackoutDates?: string[];
+};
+
+export type VenueListFilter = {
+  area?: string;
+  status?: VenueStatus;
+  type?: DateType;
+  city?: City;
+  search?: string;
+};
+
+export type VenueDetail = VenuePartner & {
+  recentBookings: DateBooking[];
+  timeSlots: VenueTimeSlot[];
 };
 
 export type SelfieSubmission = {

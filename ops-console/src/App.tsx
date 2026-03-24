@@ -19,12 +19,31 @@ type VenuePartner = {
   id: string;
   name: string;
   city: string;
-  readiness: "ready" | "paused" | "waitlist";
+  area: string;
   address: string;
-  neighborhood: string;
-  googleMapsUrl: string;
-  contactPhone: string;
+  type: string;
+  status: "active" | "inactive" | "maintenance";
   capacity: number;
+  contactPhone: string;
+  contactEmail: string;
+  operatingHours: Record<string, { open: string; close: string } | null>;
+  blackoutDates: string[];
+  readiness: "ready" | "paused" | "waitlist";
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+type VenueDetail = VenuePartner & {
+  recentBookings: DateBooking[];
+  timeSlots: Array<{
+    id: string;
+    venueId: string;
+    slotDate: string;
+    startTime: string;
+    endTime: string;
+    maxCapacity: number;
+    bookedCount: number;
+  }>;
 };
 
 type DateBooking = {
@@ -122,6 +141,18 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
+  // Venue management state
+  const [venueView, setVenueView] = useState<"list" | "detail" | "create" | "edit">("list");
+  const [selectedVenue, setSelectedVenue] = useState<VenueDetail | null>(null);
+  const [venueList, setVenueList] = useState<VenuePartner[]>([]);
+  const [venueFilters, setVenueFilters] = useState<{ area: string; status: string; type: string; search: string }>({
+    area: "", status: "", type: "", search: ""
+  });
+  const [venueForm, setVenueForm] = useState({
+    name: "", city: "Lagos", area: "", address: "", type: "Cafe",
+    capacity: 20, contactPhone: "", contactEmail: ""
+  });
+
   const fetchDashboard = async () => {
     try {
       setLoading(true);
@@ -146,6 +177,106 @@ export function App() {
   useEffect(() => {
     fetchDashboard();
   }, []);
+
+  // ── Venue Management Handlers ────────────────────────────────────
+
+  const fetchVenueList = async () => {
+    try {
+      const params = new URLSearchParams();
+      if (venueFilters.area) params.set("area", venueFilters.area);
+      if (venueFilters.status) params.set("status", venueFilters.status);
+      if (venueFilters.type) params.set("type", venueFilters.type);
+      if (venueFilters.search) params.set("search", venueFilters.search);
+      const qs = params.toString();
+      const response = await fetch(`${API_BASE}/ops/venues${qs ? `?${qs}` : ""}`, {
+        headers: { "x-user-id": "ops-user" }
+      });
+      if (!response.ok) throw new Error("Failed to fetch venues");
+      const data = await response.json();
+      setVenueList(data);
+    } catch (err) {
+      console.error("Error fetching venues:", err);
+    }
+  };
+
+  const fetchVenueDetail = async (venueId: string) => {
+    try {
+      setActionLoading(venueId);
+      const response = await fetch(`${API_BASE}/ops/venues/${venueId}`, {
+        headers: { "x-user-id": "ops-user" }
+      });
+      if (!response.ok) throw new Error("Failed to fetch venue detail");
+      const data = await response.json();
+      setSelectedVenue(data);
+      setVenueView("detail");
+    } catch (err) {
+      console.error("Error fetching venue detail:", err);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleCreateVenue = async () => {
+    try {
+      setActionLoading("create-venue");
+      const response = await fetch(`${API_BASE}/ops/venues`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-user-id": "ops-user" },
+        body: JSON.stringify(venueForm)
+      });
+      if (!response.ok) throw new Error("Failed to create venue");
+      setVenueForm({ name: "", city: "Lagos", area: "", address: "", type: "Cafe", capacity: 20, contactPhone: "", contactEmail: "" });
+      setVenueView("list");
+      await fetchVenueList();
+      await fetchDashboard();
+    } catch (err) {
+      console.error("Error creating venue:", err);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleUpdateVenue = async (venueId: string, updates: Record<string, unknown>) => {
+    try {
+      setActionLoading(venueId);
+      const response = await fetch(`${API_BASE}/ops/venues/${venueId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "x-user-id": "ops-user" },
+        body: JSON.stringify(updates)
+      });
+      if (!response.ok) throw new Error("Failed to update venue");
+      await fetchVenueList();
+      await fetchDashboard();
+      if (selectedVenue?.id === venueId) {
+        await fetchVenueDetail(venueId);
+      }
+    } catch (err) {
+      console.error("Error updating venue:", err);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleSetVenueStatus = async (venueId: string, status: string) => {
+    try {
+      setActionLoading(venueId);
+      const response = await fetch(`${API_BASE}/ops/venues/${venueId}/${status === "active" ? "activate" : status === "maintenance" ? "maintenance" : "deactivate"}`, {
+        method: "POST",
+        headers: { "x-user-id": "ops-user" }
+      });
+      if (!response.ok) throw new Error("Failed to update venue status");
+      await fetchVenueList();
+      await fetchDashboard();
+    } catch (err) {
+      console.error("Error updating venue status:", err);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  useEffect(() => {
+    if (venueView === "list") fetchVenueList();
+  }, [venueView, venueFilters]);
 
   const handleResolveReport = async (reportId: string) => {
     try {
@@ -369,6 +500,10 @@ export function App() {
   }
 
   const { overview, moderationQueue, venueNetwork, bookings } = dashboard;
+
+  const inputStyle: React.CSSProperties = {
+    padding: "0.5rem", fontSize: "0.9rem", border: "1px solid #ccc", borderRadius: "4px"
+  };
 
   return (
     <main className="shell">
@@ -686,33 +821,218 @@ export function App() {
           )}
         </article>
 
-        <article className="panel">
-          <h2>Venue network ({venueNetwork.length})</h2>
-          {venueNetwork.map((venue) => (
-            <div key={venue.id} className="row">
-              <div>
-                <strong>{venue.name}</strong>
-                <p>
-                  {venue.city} • {venue.neighborhood}
-                </p>
-                <small>Capacity: {venue.capacity}</small>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", alignItems: "flex-end" }}>
-                <span className={`pill ${venue.readiness}`}>{venue.readiness}</span>
+        <article className="panel" style={{ gridColumn: "1 / -1" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+            <h2>Venue Management ({venueNetwork.length} total, {venueNetwork.filter(v => v.status === "active" || v.readiness === "ready").length} active)</h2>
+            <div style={{ display: "flex", gap: "0.5rem" }}>
+              {venueView !== "list" && (
                 <button
-                  onClick={() => handleToggleVenue(venue.id)}
-                  disabled={actionLoading === venue.id}
-                  style={{
-                    padding: "0.25rem 0.5rem",
-                    fontSize: "0.8rem",
-                    cursor: actionLoading === venue.id ? "wait" : "pointer"
-                  }}
+                  onClick={() => { setVenueView("list"); setSelectedVenue(null); }}
+                  style={{ padding: "0.4rem 0.8rem", fontSize: "0.85rem", cursor: "pointer", backgroundColor: "#6c757d", color: "white", border: "none", borderRadius: "4px" }}
                 >
-                  {actionLoading === venue.id ? "..." : venue.readiness === "ready" ? "Pause" : "Activate"}
+                  Back to List
+                </button>
+              )}
+              {venueView === "list" && (
+                <button
+                  onClick={() => setVenueView("create")}
+                  style={{ padding: "0.4rem 0.8rem", fontSize: "0.85rem", cursor: "pointer", backgroundColor: "#C17F5F", color: "white", border: "none", borderRadius: "4px" }}
+                >
+                  + New Venue
+                </button>
+              )}
+            </div>
+          </div>
+
+          {venueView === "create" && (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem", marginBottom: "1rem" }}>
+              <input placeholder="Venue name" value={venueForm.name} onChange={e => setVenueForm(f => ({ ...f, name: e.target.value }))} style={inputStyle} />
+              <select value={venueForm.city} onChange={e => setVenueForm(f => ({ ...f, city: e.target.value }))} style={inputStyle}>
+                <option value="Lagos">Lagos</option>
+                <option value="Abuja">Abuja</option>
+                <option value="PortHarcourt">Port Harcourt</option>
+              </select>
+              <input placeholder="Area / Neighborhood" value={venueForm.area} onChange={e => setVenueForm(f => ({ ...f, area: e.target.value }))} style={inputStyle} />
+              <input placeholder="Full address" value={venueForm.address} onChange={e => setVenueForm(f => ({ ...f, address: e.target.value }))} style={inputStyle} />
+              <select value={venueForm.type} onChange={e => setVenueForm(f => ({ ...f, type: e.target.value }))} style={inputStyle}>
+                <option value="Cafe">Cafe</option>
+                <option value="Lounge">Lounge</option>
+                <option value="DessertSpot">Dessert Spot</option>
+                <option value="Brunch">Brunch</option>
+                <option value="CasualRestaurant">Casual Restaurant</option>
+                <option value="HotelLobby">Hotel Lobby</option>
+              </select>
+              <input type="number" placeholder="Capacity" value={venueForm.capacity} onChange={e => setVenueForm(f => ({ ...f, capacity: parseInt(e.target.value) || 0 }))} style={inputStyle} />
+              <input placeholder="Contact phone" value={venueForm.contactPhone} onChange={e => setVenueForm(f => ({ ...f, contactPhone: e.target.value }))} style={inputStyle} />
+              <input placeholder="Contact email" value={venueForm.contactEmail} onChange={e => setVenueForm(f => ({ ...f, contactEmail: e.target.value }))} style={inputStyle} />
+              <div style={{ gridColumn: "1 / -1", display: "flex", gap: "0.5rem" }}>
+                <button
+                  onClick={handleCreateVenue}
+                  disabled={actionLoading === "create-venue" || !venueForm.name || !venueForm.area}
+                  style={{ padding: "0.5rem 1.2rem", backgroundColor: "#4CAF50", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+                >
+                  {actionLoading === "create-venue" ? "Creating..." : "Create Venue"}
+                </button>
+                <button onClick={() => setVenueView("list")} style={{ padding: "0.5rem 1.2rem", border: "1px solid #ccc", borderRadius: "4px", cursor: "pointer", background: "white" }}>
+                  Cancel
                 </button>
               </div>
             </div>
-          ))}
+          )}
+
+          {venueView === "detail" && selectedVenue && (
+            <div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1.5rem" }}>
+                <div>
+                  <h3 style={{ margin: "0 0 0.5rem" }}>{selectedVenue.name}</h3>
+                  <p style={{ margin: "0.25rem 0", fontSize: "0.9rem" }}><strong>City:</strong> {selectedVenue.city}</p>
+                  <p style={{ margin: "0.25rem 0", fontSize: "0.9rem" }}><strong>Area:</strong> {selectedVenue.area}</p>
+                  <p style={{ margin: "0.25rem 0", fontSize: "0.9rem" }}><strong>Address:</strong> {selectedVenue.address}</p>
+                  <p style={{ margin: "0.25rem 0", fontSize: "0.9rem" }}><strong>Type:</strong> {selectedVenue.type}</p>
+                </div>
+                <div>
+                  <p style={{ margin: "0.25rem 0", fontSize: "0.9rem" }}><strong>Status:</strong>{" "}
+                    <span style={{ color: selectedVenue.status === "active" ? "#4CAF50" : selectedVenue.status === "maintenance" ? "#ffc107" : "#dc3545", fontWeight: "bold" }}>
+                      {selectedVenue.status.toUpperCase()}
+                    </span>
+                  </p>
+                  <p style={{ margin: "0.25rem 0", fontSize: "0.9rem" }}><strong>Capacity:</strong> {selectedVenue.capacity}</p>
+                  <p style={{ margin: "0.25rem 0", fontSize: "0.9rem" }}><strong>Phone:</strong> {selectedVenue.contactPhone || "N/A"}</p>
+                  <p style={{ margin: "0.25rem 0", fontSize: "0.9rem" }}><strong>Email:</strong> {selectedVenue.contactEmail || "N/A"}</p>
+                </div>
+              </div>
+
+              {selectedVenue.operatingHours && (
+                <div style={{ marginBottom: "1.5rem" }}>
+                  <h4 style={{ margin: "0 0 0.5rem" }}>Operating Hours (WAT)</h4>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "0.5rem", fontSize: "0.8rem" }}>
+                    {["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"].map(day => {
+                      const hours = selectedVenue.operatingHours?.[day];
+                      return (
+                        <div key={day} style={{ backgroundColor: "#f8f9fa", padding: "0.5rem", borderRadius: "4px", textAlign: "center" }}>
+                          <strong>{day.slice(0, 3).toUpperCase()}</strong>
+                          <p style={{ margin: "0.25rem 0 0", fontSize: "0.75rem" }}>
+                            {hours ? `${hours.open}-${hours.close}` : "Closed"}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1.5rem" }}>
+                {selectedVenue.status !== "active" && (
+                  <button onClick={() => handleSetVenueStatus(selectedVenue.id, "active")} disabled={actionLoading === selectedVenue.id}
+                    style={{ padding: "0.4rem 0.8rem", fontSize: "0.85rem", backgroundColor: "#4CAF50", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}>
+                    Activate
+                  </button>
+                )}
+                {selectedVenue.status !== "inactive" && (
+                  <button onClick={() => handleSetVenueStatus(selectedVenue.id, "inactive")} disabled={actionLoading === selectedVenue.id}
+                    style={{ padding: "0.4rem 0.8rem", fontSize: "0.85rem", backgroundColor: "#dc3545", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}>
+                    Deactivate
+                  </button>
+                )}
+                {selectedVenue.status !== "maintenance" && (
+                  <button onClick={() => handleSetVenueStatus(selectedVenue.id, "maintenance")} disabled={actionLoading === selectedVenue.id}
+                    style={{ padding: "0.4rem 0.8rem", fontSize: "0.85rem", backgroundColor: "#ffc107", color: "#333", border: "none", borderRadius: "4px", cursor: "pointer" }}>
+                    Set Maintenance
+                  </button>
+                )}
+              </div>
+
+              {selectedVenue.timeSlots && selectedVenue.timeSlots.length > 0 && (
+                <div style={{ marginBottom: "1.5rem" }}>
+                  <h4 style={{ margin: "0 0 0.5rem" }}>Upcoming Time Slots</h4>
+                  {selectedVenue.timeSlots.map(slot => (
+                    <div key={slot.id} style={{ fontSize: "0.85rem", padding: "0.5rem", backgroundColor: "#f8f9fa", marginBottom: "0.25rem", borderRadius: "4px", display: "flex", justifyContent: "space-between" }}>
+                      <span>{slot.slotDate} • {slot.startTime}-{slot.endTime}</span>
+                      <span>{slot.bookedCount}/{slot.maxCapacity} booked</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div>
+                <h4 style={{ margin: "0 0 0.5rem" }}>Recent Bookings ({selectedVenue.recentBookings?.length || 0})</h4>
+                {(!selectedVenue.recentBookings || selectedVenue.recentBookings.length === 0) ? (
+                  <p style={{ opacity: 0.6, fontStyle: "italic", fontSize: "0.9rem" }}>No bookings at this venue yet</p>
+                ) : (
+                  selectedVenue.recentBookings.map(b => (
+                    <div key={b.id} style={{ fontSize: "0.85rem", padding: "0.5rem", backgroundColor: "#f8f9fa", marginBottom: "0.25rem", borderRadius: "4px" }}>
+                      <strong>{b.id}</strong> • {b.counterpartName} • Status: {b.status} • {b.startAt ? new Date(b.startAt).toLocaleDateString() : "TBD"}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+
+          {venueView === "list" && (
+            <>
+              <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem", flexWrap: "wrap" }}>
+                <input
+                  placeholder="Search venues..."
+                  value={venueFilters.search}
+                  onChange={e => setVenueFilters(f => ({ ...f, search: e.target.value }))}
+                  style={{ ...inputStyle, flex: "1", minWidth: "150px" }}
+                />
+                <select value={venueFilters.status} onChange={e => setVenueFilters(f => ({ ...f, status: e.target.value }))} style={{ ...inputStyle, width: "auto" }}>
+                  <option value="">All statuses</option>
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                  <option value="maintenance">Maintenance</option>
+                </select>
+                <select value={venueFilters.type} onChange={e => setVenueFilters(f => ({ ...f, type: e.target.value }))} style={{ ...inputStyle, width: "auto" }}>
+                  <option value="">All types</option>
+                  <option value="Cafe">Cafe</option>
+                  <option value="Lounge">Lounge</option>
+                  <option value="DessertSpot">Dessert Spot</option>
+                  <option value="Brunch">Brunch</option>
+                  <option value="CasualRestaurant">Casual Restaurant</option>
+                  <option value="HotelLobby">Hotel Lobby</option>
+                </select>
+                <input
+                  placeholder="Filter by area..."
+                  value={venueFilters.area}
+                  onChange={e => setVenueFilters(f => ({ ...f, area: e.target.value }))}
+                  style={{ ...inputStyle, width: "150px" }}
+                />
+              </div>
+              {venueList.length === 0 && venueNetwork.length === 0 ? (
+                <p style={{ opacity: 0.6, fontStyle: "italic" }}>No venues found</p>
+              ) : (
+                (venueList.length > 0 ? venueList : venueNetwork).map((venue) => (
+                  <div key={venue.id} className="row" style={{ cursor: "pointer" }} onClick={() => fetchVenueDetail(venue.id)}>
+                    <div>
+                      <strong>{venue.name}</strong>
+                      <p>
+                        {venue.city} • {venue.area}
+                      </p>
+                      <small>Type: {venue.type} • Capacity: {venue.capacity || "N/A"}</small>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", alignItems: "flex-end" }}>
+                      <span className={`pill ${venue.status === "active" ? "ready" : venue.status === "maintenance" ? "waitlist" : "paused"}`}>
+                        {venue.status || venue.readiness}
+                      </span>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleToggleVenue(venue.id); }}
+                        disabled={actionLoading === venue.id}
+                        style={{
+                          padding: "0.25rem 0.5rem",
+                          fontSize: "0.8rem",
+                          cursor: actionLoading === venue.id ? "wait" : "pointer"
+                        }}
+                      >
+                        {actionLoading === venue.id ? "..." : venue.status === "active" || venue.readiness === "ready" ? "Pause" : "Activate"}
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </>
+          )}
         </article>
 
         <article className="panel">
