@@ -58,9 +58,9 @@ data class MatchResponseRequest(
 @Serializable
 data class MatchResponseEnvelope(
     val success: Boolean,
-    val reason: String? = null,
     val nextStep: String? = null,
-    val bootstrap: BootstrapPayload,
+    val reason: String? = null,
+    val bootstrap: BootstrapPayload
 )
 
 @Serializable

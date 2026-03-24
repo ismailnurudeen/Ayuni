@@ -10,6 +10,7 @@ import com.ayuni.app.platform.TokenStorage
 import com.ayuni.app.platform.createPlatformHttpClient
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
+import io.ktor.client.plugins.ClientRequestException
 import io.ktor.client.plugins.HttpSend
 import io.ktor.client.plugins.plugin
 import io.ktor.client.request.get
@@ -37,35 +38,41 @@ class AyuniApiClient(
                 request.header(HttpHeaders.Authorization, "Bearer $accessToken")
             }
 
-            val originalCall = execute(request)
+            val originalCall = try {
+                execute(request)
+            } catch (e: ClientRequestException) {
+                if (e.response.status != HttpStatusCode.Unauthorized || accessToken == null) throw e
 
-            if (originalCall.response.status == HttpStatusCode.Unauthorized && accessToken != null) {
-                // Try to refresh the token
-                val refreshToken = tokenStorage.getRefreshToken()
-                if (refreshToken != null) {
-                    try {
-                        val refreshResponse = httpClient.post("$baseUrl/auth/refresh") {
-                            contentType(ContentType.Application.Json)
-                            setBody(RefreshTokenRequest(refreshToken = refreshToken))
-                        }.body<RefreshTokenResponse>()
+                // 401 — attempt token refresh before failing
+                val refreshToken = tokenStorage.getRefreshToken() ?: throw e
+                try {
+                    val refreshResponse = httpClient.post("$baseUrl/auth/refresh") {
+                        contentType(ContentType.Application.Json)
+                        setBody(RefreshTokenRequest(refreshToken = refreshToken))
+                    }.body<RefreshTokenResponse>()
 
-                        if (refreshResponse.success) {
-                            tokenStorage.saveTokens(
-                                refreshResponse.accessToken,
-                                refreshResponse.refreshToken,
-                                refreshResponse.accessTokenExpiresAt,
-                                refreshResponse.refreshTokenExpiresAt
-                            )
+                    if (refreshResponse.success) {
+                        tokenStorage.saveTokens(
+                            refreshResponse.accessToken,
+                            refreshResponse.refreshToken,
+                            refreshResponse.accessTokenExpiresAt,
+                            refreshResponse.refreshTokenExpiresAt
+                        )
 
-                            // Retry the original request with the new token
-                            request.header(HttpHeaders.Authorization, "Bearer ${refreshResponse.accessToken}")
-                            return@intercept execute(request)
-                        }
-                    } catch (e: Exception) {
-                        // Refresh failed, clear tokens
-                        tokenStorage.clearTokens()
+                        // Retry the original request with the new token
+                        request.header(HttpHeaders.Authorization, "Bearer ${refreshResponse.accessToken}")
+                        return@intercept execute(request)
                     }
+                } catch (refreshError: ClientRequestException) {
+                    // Refresh endpoint also failed, clear tokens
+                    tokenStorage.clearTokens()
+                    throw e
+                } catch (refreshError: Exception) {
+                    tokenStorage.clearTokens()
+                    throw e
                 }
+
+                throw e
             }
 
             originalCall
