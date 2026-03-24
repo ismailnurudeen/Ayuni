@@ -34,4 +34,22 @@ export class BookingController {
   getLogisticsChat(@Param("id") id: string, @UserId() userId: string) {
     return this.appService.getLogisticsChat(id, userId);
   }
+
+  @Post("bookings/:id/cancel")
+  cancelBooking(
+    @Param("id") id: string,
+    @Body() body: { reason: string },
+    @UserId() userId: string
+  ) {
+    return this.appService.requestCancellation(id, body.reason, userId);
+  }
+
+  @Post("bookings/:id/reschedule")
+  rescheduleBooking(
+    @Param("id") id: string,
+    @Body() body: { newAvailability: string[] },
+    @UserId() userId: string
+  ) {
+    return this.appService.requestReschedule(id, body.newAvailability, userId);
+  }
 }

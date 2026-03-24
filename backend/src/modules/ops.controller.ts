@@ -31,6 +31,45 @@ export class OpsController {
     return this.appService.escalateBooking(id, userId);
   }
 
+  // ── Booking Support Workflows (P1-05) ─────────────────────────────
+
+  @Get("support-queue")
+  getSupportQueue(@Headers("x-user-id") userId?: string) {
+    return this.appService.getSupportQueue(userId);
+  }
+
+  @Post("support-requests/:id/approve")
+  approveSupportRequest(
+    @Param("id") id: string,
+    @Body() body: { notes?: string },
+    @Headers("x-user-id") opsUserId?: string
+  ) {
+    return this.appService.approveSupportRequest(id, body.notes, opsUserId);
+  }
+
+  @Post("support-requests/:id/deny")
+  denySupportRequest(
+    @Param("id") id: string,
+    @Body() body: { notes?: string },
+    @Headers("x-user-id") opsUserId?: string
+  ) {
+    return this.appService.denySupportRequest(id, body.notes, opsUserId);
+  }
+
+  @Post("bookings/:id/force-cancel")
+  forceCancel(
+    @Param("id") id: string,
+    @Body() body: { reason?: string },
+    @Headers("x-user-id") opsUserId?: string
+  ) {
+    return this.appService.forceCancel(id, body.reason, opsUserId);
+  }
+
+  @Get("bookings/:id/audit-log")
+  getAuditLog(@Param("id") id: string) {
+    return this.appService.getBookingAuditLog(id);
+  }
+
   // ── Venue Management (P1-04) ──────────────────────────────────────
 
   @Post("venues")

@@ -504,6 +504,62 @@ export function App() {
     }
   };
 
+  const handleApproveSupportRequest = async (requestId: string) => {
+    const notes = prompt("Resolution notes (optional):");
+    try {
+      setActionLoading(requestId);
+      const response = await fetch(`${API_BASE}/ops/support-requests/${requestId}/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-user-id": "ops-user" },
+        body: JSON.stringify({ notes: notes || undefined })
+      });
+      if (!response.ok) throw new Error("Failed to approve support request");
+      await fetchDashboard();
+    } catch (err) {
+      console.error("Error approving support request:", err);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleDenySupportRequest = async (requestId: string) => {
+    const notes = prompt("Denial reason:");
+    if (!notes) return;
+    try {
+      setActionLoading(requestId);
+      const response = await fetch(`${API_BASE}/ops/support-requests/${requestId}/deny`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-user-id": "ops-user" },
+        body: JSON.stringify({ notes })
+      });
+      if (!response.ok) throw new Error("Failed to deny support request");
+      await fetchDashboard();
+    } catch (err) {
+      console.error("Error denying support request:", err);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleForceCancel = async (bookingId: string) => {
+    const reason = prompt("Reason for force cancellation:");
+    if (!reason) return;
+    try {
+      setActionLoading(bookingId);
+      const response = await fetch(`${API_BASE}/ops/bookings/${bookingId}/force-cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-user-id": "ops-user" },
+        body: JSON.stringify({ reason })
+      });
+      if (!response.ok) throw new Error("Failed to force-cancel booking");
+      await fetchDashboard();
+    } catch (err) {
+      console.error("Error force-cancelling booking:", err);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   const handleToggleGovIdRequirement = async () => {
     if (!dashboard) return;
     const newValue = !dashboard.featureToggles.requireGovIdForBooking;
@@ -557,7 +613,7 @@ export function App() {
     );
   }
 
-  const { overview, moderationQueue, venueNetwork, bookings } = dashboard;
+  const { overview, moderationQueue, venueNetwork, supportQueue, bookings } = dashboard;
 
   const inputStyle: React.CSSProperties = {
     padding: "0.5rem", fontSize: "0.9rem", border: "1px solid #ccc", borderRadius: "4px"
@@ -572,7 +628,7 @@ export function App() {
           Designed for real-date operations: trust reviews, freeze decisions, venue readiness, and booking escalations.
         </p>
         <div style={{ marginTop: "1rem", fontSize: "0.9rem", opacity: 0.8 }}>
-          <strong>Overview:</strong> {overview.pendingReports} pending reports • {overview.pendingSelfieReviews || 0} pending selfies • {overview.pendingGovIdReviews || 0} pending IDs • {overview.activeVenueCount} active
+          <strong>Overview:</strong> {overview.pendingReports} pending reports • {overview.pendingSelfieReviews || 0} pending selfies • {overview.pendingGovIdReviews || 0} pending IDs • {overview.pendingSupportRequests || 0} support requests • {overview.activeVenueCount} active
           venues • {overview.totalAcceptedThisRound} accepted / {overview.totalDeclinedThisRound} declined this round
         </div>
       </section>
@@ -1094,6 +1150,57 @@ export function App() {
         </article>
 
         <article className="panel">
+          <h2>Support Queue ({supportQueue?.length || 0})</h2>
+          {(!supportQueue || supportQueue.length === 0) ? (
+            <p style={{ opacity: 0.6, fontStyle: "italic" }}>No pending support requests</p>
+          ) : (
+            supportQueue.map((req) => (
+              <div key={req.id} className="row">
+                <div>
+                  <strong style={{ textTransform: "capitalize" }}>{req.type}</strong>
+                  <p>
+                    Booking: {req.bookingId} &bull; User: {req.userId}
+                  </p>
+                  {req.reason && <small>Reason: {req.reason}</small>}
+                  {req.newAvailability && (
+                    <small style={{ display: "block" }}>
+                      New availability: {req.newAvailability.join(", ")}
+                    </small>
+                  )}
+                  <small style={{ display: "block", marginTop: "0.25rem" }}>
+                    Submitted: {new Date(req.createdAt).toLocaleString()}
+                    {req.refundStatus && ` • Refund: ${req.refundStatus}`}
+                  </small>
+                </div>
+                <div style={{ display: "flex", gap: "0.5rem", flexDirection: "column", alignItems: "flex-end" }}>
+                  <span className={`pill ${req.status === "requested" ? "waitlist" : "paused"}`}>
+                    {req.status}
+                  </span>
+                  {(req.status === "requested" || req.status === "under_review") && (
+                    <div style={{ display: "flex", gap: "0.25rem" }}>
+                      <button
+                        onClick={() => handleApproveSupportRequest(req.id)}
+                        disabled={actionLoading === req.id}
+                        style={{ padding: "0.25rem 0.5rem", fontSize: "0.8rem", background: "#4CAF50", color: "#fff", border: "none", borderRadius: "4px", cursor: actionLoading === req.id ? "wait" : "pointer" }}
+                      >
+                        {actionLoading === req.id ? "..." : "Approve"}
+                      </button>
+                      <button
+                        onClick={() => handleDenySupportRequest(req.id)}
+                        disabled={actionLoading === req.id}
+                        style={{ padding: "0.25rem 0.5rem", fontSize: "0.8rem", background: "#f44336", color: "#fff", border: "none", borderRadius: "4px", cursor: actionLoading === req.id ? "wait" : "pointer" }}
+                      >
+                        {actionLoading === req.id ? "..." : "Deny"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))
+          )}
+        </article>
+
+        <article className="panel">
           <h2>Bookings ({bookings.length})</h2>
           {bookings.length === 0 ? (
             <p style={{ opacity: 0.6, fontStyle: "italic" }}>No bookings yet</p>
@@ -1129,6 +1236,24 @@ export function App() {
                   )}
                   {booking.checkInStatus === "SupportFlagged" && (
                     <span style={{ fontSize: "0.8rem", color: "orange" }}>⚠ Escalated</span>
+                  )}
+                  {booking.status !== "cancelled" && booking.status !== "completed" && (
+                    <button
+                      onClick={() => handleForceCancel(booking.id)}
+                      disabled={actionLoading === booking.id}
+                      style={{
+                        marginTop: "0.25rem",
+                        padding: "0.25rem 0.5rem",
+                        fontSize: "0.75rem",
+                        background: "#f44336",
+                        color: "#fff",
+                        border: "none",
+                        borderRadius: "4px",
+                        cursor: actionLoading === booking.id ? "wait" : "pointer"
+                      }}
+                    >
+                      {actionLoading === booking.id ? "..." : "Force Cancel"}
+                    </button>
                   )}
                 </div>
               </div>

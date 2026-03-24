@@ -6,6 +6,8 @@ import { OtpService } from "./otp.service";
 import { TwilioSmsService } from "./sms.service";
 import { MediaService } from "./media.service";
 import { PaystackService } from "./paystack.service";
+import { ReminderService } from "./reminder.service";
+import { WhatsAppService } from "./whatsapp.service";
 import { AppService } from "./app.service";
 import { SafetyReport } from "./app.types";
 
@@ -17,6 +19,8 @@ describe("AppService", () => {
   let smsService: TwilioSmsService;
   let mediaService: MediaService;
   let paystackService: PaystackService;
+  let whatsappService: WhatsAppService;
+  let reminderService: ReminderService;
   let service: AppService;
 
   beforeEach(async () => {
@@ -32,7 +36,9 @@ describe("AppService", () => {
     smsService = new TwilioSmsService();
     mediaService = new MediaService(databaseService);
     paystackService = new PaystackService();
-    service = new AppService(databaseService, authService, otpService, smsService, mediaService, paystackService);
+    whatsappService = new WhatsAppService();
+    reminderService = new ReminderService(databaseService, whatsappService, smsService);
+    service = new AppService(databaseService, authService, otpService, smsService, mediaService, paystackService, reminderService);
     await service.onModuleInit();
   });
 
@@ -81,7 +87,9 @@ describe("AppService", () => {
     const restartedSmsService = new TwilioSmsService();
     const restartedMediaService = new MediaService(restartedDatabaseService);
     const restartedPaystackService = new PaystackService();
-    const restartedService = new AppService(restartedDatabaseService, restartedAuthService, restartedOtpService, restartedSmsService, restartedMediaService, restartedPaystackService);
+    const restartedWhatsAppService = new WhatsAppService();
+    const restartedReminderService = new ReminderService(restartedDatabaseService, restartedWhatsAppService, restartedSmsService);
+    const restartedService = new AppService(restartedDatabaseService, restartedAuthService, restartedOtpService, restartedSmsService, restartedMediaService, restartedPaystackService, restartedReminderService);
     await restartedService.onModuleInit();
 
     const bootstrap = await restartedService.getBootstrap("demo-user");
@@ -557,7 +565,7 @@ describe("AppService", () => {
       );
 
       // Simulate restart by creating new service instance
-      const newService = new AppService(databaseService, authService, otpService, smsService, mediaService, paystackService);
+      const newService = new AppService(databaseService, authService, otpService, smsService, mediaService, paystackService, reminderService);
       const restartedBootstrap = await newService.getBootstrap("booking-user-4");
 
       const booking = restartedBootstrap.bookings.find((b) => b.id === result.bookingId);
@@ -1458,6 +1466,205 @@ describe("AppService", () => {
       found = dashboard.venueNetwork.find(v => v.id === venue.id);
       expect(found).toBeDefined();
       expect(found!.status).toBe("inactive");
+    });
+  });
+
+  describe("Booking support workflows (P1-05)", () => {
+    async function createConfirmedBooking(userId: string) {
+      const bootstrap = await service.getBootstrap(userId);
+      const matchId = bootstrap.suggestions[0].id;
+      await service.submitAvailability(matchId, ["Saturday evening"], userId);
+      const result = await service.createBooking(matchId, userId);
+      return result.booking;
+    }
+
+    async function setBookingStartAt(bookingId: string, userId: string, startAt: string) {
+      // pg-mem doesn't support jsonb || operator, so read-modify-write
+      const result = await pool.query<{ payload: any }>(
+        "SELECT payload FROM bookings WHERE id = $1 AND user_id = $2",
+        [bookingId, userId]
+      );
+      const payload = result.rows[0].payload;
+      payload.startAt = startAt;
+      await pool.query(
+        "UPDATE bookings SET payload = $1 WHERE id = $2",
+        [payload, bookingId]
+      );
+    }
+
+    it("allows free cancellation for booking 24+ hours away", async () => {
+      const booking = await createConfirmedBooking("cancel-free-user");
+
+      // Set startAt to 48 hours from now so free cancellation applies
+      await setBookingStartAt(booking.id, "cancel-free-user", new Date(Date.now() + 1000 * 60 * 60 * 48).toISOString());
+
+      const request = await service.requestCancellation(booking.id, "schedule_conflict", "cancel-free-user");
+
+      expect(request.type).toBe("cancellation");
+      expect(request.status).toBe("approved");
+      expect(request.refundStatus).toBe("eligible");
+
+      // Booking should be cancelled
+      const bootstrap = await service.getBootstrap("cancel-free-user");
+      const updated = bootstrap.bookings.find(b => b.id === booking.id);
+      expect(updated!.status).toBe("cancelled");
+      expect(updated!.cancellationReason).toBe("schedule_conflict");
+      expect(updated!.cancelledAt).toBeDefined();
+    });
+
+    it("creates support request for late cancellation", async () => {
+      const userId = "cancel-late-user";
+      const bootstrap = await service.getBootstrap(userId);
+      const matchId = bootstrap.suggestions[0].id;
+      await service.submitAvailability(matchId, ["Saturday evening"], userId);
+      const result = await service.createBooking(matchId, userId);
+      const booking = result.booking;
+
+      // Manually set startAt to be within 24 hours
+      await setBookingStartAt(booking.id, userId, new Date(Date.now() + 1000 * 60 * 60).toISOString());
+
+      const request = await service.requestCancellation(booking.id, "no_longer_interested", userId);
+      expect(request.type).toBe("cancellation");
+      expect(request.status).toBe("requested");
+      expect(request.refundStatus).toBe("ineligible");
+
+      // Booking should NOT be cancelled yet (pending ops review)
+      const updated = await service.getBootstrap(userId);
+      const b = updated.bookings.find(b => b.id === booking.id);
+      expect(b!.status).toBe("confirmed");
+    });
+
+    it("prevents cancellation of already cancelled booking", async () => {
+      const booking = await createConfirmedBooking("cancel-twice-user");
+      // Set date far out so first cancellation auto-approves
+      await setBookingStartAt(booking.id, "cancel-twice-user", new Date(Date.now() + 1000 * 60 * 60 * 48).toISOString());
+      await service.requestCancellation(booking.id, "schedule_conflict", "cancel-twice-user");
+
+      await expect(
+        service.requestCancellation(booking.id, "other", "cancel-twice-user")
+      ).rejects.toThrow("Cannot cancel a booking that is cancelled");
+    });
+
+    it("creates reschedule support request", async () => {
+      const booking = await createConfirmedBooking("resched-user");
+      await setBookingStartAt(booking.id, "resched-user", new Date(Date.now() + 1000 * 60 * 60 * 48).toISOString());
+
+      const request = await service.requestReschedule(
+        booking.id,
+        ["Sunday afternoon", "Monday evening"],
+        "resched-user"
+      );
+
+      expect(request.type).toBe("reschedule");
+      expect(request.status).toBe("requested");
+      expect(request.newAvailability).toEqual(["Sunday afternoon", "Monday evening"]);
+    });
+
+    it("shows support requests in queue", async () => {
+      const userId = "queue-user";
+      const bootstrap = await service.getBootstrap(userId);
+      const matchId = bootstrap.suggestions[0].id;
+      await service.submitAvailability(matchId, ["Saturday evening"], userId);
+      const result = await service.createBooking(matchId, userId);
+      const booking = result.booking;
+
+      // Set startAt within 24 hours for late cancel (goes to queue)
+      await setBookingStartAt(booking.id, userId, new Date(Date.now() + 1000 * 60 * 60).toISOString());
+
+      await service.requestCancellation(booking.id, "schedule_conflict", userId);
+
+      const queue = await service.getSupportQueue();
+      expect(queue.length).toBeGreaterThanOrEqual(1);
+      const found = queue.find(r => r.bookingId === booking.id);
+      expect(found).toBeDefined();
+      expect(found!.type).toBe("cancellation");
+      expect(found!.status).toBe("requested");
+    });
+
+    it("ops can approve a cancellation support request", async () => {
+      const userId = "approve-user";
+      const bootstrap = await service.getBootstrap(userId);
+      const matchId = bootstrap.suggestions[0].id;
+      await service.submitAvailability(matchId, ["Saturday evening"], userId);
+      const result = await service.createBooking(matchId, userId);
+      const booking = result.booking;
+
+      // Late cancel so it goes to queue
+      await setBookingStartAt(booking.id, userId, new Date(Date.now() + 1000 * 60 * 60).toISOString());
+
+      const request = await service.requestCancellation(booking.id, "other", userId);
+      await service.approveSupportRequest(request.id, "Circumstances understood", "ops-admin");
+
+      // Booking should now be cancelled
+      const updated = await service.getBootstrap(userId);
+      const b = updated.bookings.find(b => b.id === booking.id);
+      expect(b!.status).toBe("cancelled");
+    });
+
+    it("ops can deny a support request", async () => {
+      const userId = "deny-user";
+      const bootstrap = await service.getBootstrap(userId);
+      const matchId = bootstrap.suggestions[0].id;
+      await service.submitAvailability(matchId, ["Saturday evening"], userId);
+      const result = await service.createBooking(matchId, userId);
+      const booking = result.booking;
+
+      await setBookingStartAt(booking.id, userId, new Date(Date.now() + 1000 * 60 * 60).toISOString());
+
+      const request = await service.requestCancellation(booking.id, "other", userId);
+      await service.denySupportRequest(request.id, "Policy does not allow", "ops-admin");
+
+      // Booking should still be confirmed
+      const updated = await service.getBootstrap(userId);
+      const b = updated.bookings.find(b => b.id === booking.id);
+      expect(b!.status).toBe("confirmed");
+
+      // Queue should be empty for this request
+      const queue = await service.getSupportQueue();
+      const found = queue.find(r => r.id === request.id);
+      expect(found).toBeUndefined();
+    });
+
+    it("ops can force-cancel any booking", async () => {
+      const booking = await createConfirmedBooking("force-cancel-user");
+
+      const result = await service.forceCancel(booking.id, "Safety concern", "ops-admin");
+      expect(result.cancelled).toBe(true);
+
+      const updated = await service.getBootstrap("force-cancel-user");
+      const b = updated.bookings.find(b => b.id === booking.id);
+      expect(b!.status).toBe("cancelled");
+      expect(b!.cancellationReason).toBe("Safety concern");
+    });
+
+    it("records audit log entries for cancellation", async () => {
+      const booking = await createConfirmedBooking("audit-user");
+      // Set date far enough for free cancellation
+      await setBookingStartAt(booking.id, "audit-user", new Date(Date.now() + 1000 * 60 * 60 * 48).toISOString());
+      await service.requestCancellation(booking.id, "schedule_conflict", "audit-user");
+
+      const auditLog = await service.getBookingAuditLog(booking.id);
+      expect(auditLog.length).toBeGreaterThanOrEqual(1);
+      expect(auditLog[0].action).toBe("cancellation_requested");
+      expect(auditLog[0].actorId).toBe("audit-user");
+      expect(auditLog[0].actorType).toBe("user");
+    });
+
+    it("support queue appears in ops dashboard", async () => {
+      const userId = "dashboard-queue-user";
+      const bootstrap = await service.getBootstrap(userId);
+      const matchId = bootstrap.suggestions[0].id;
+      await service.submitAvailability(matchId, ["Saturday evening"], userId);
+      const result = await service.createBooking(matchId, userId);
+
+      await setBookingStartAt(result.booking.id, userId, new Date(Date.now() + 1000 * 60 * 60).toISOString());
+
+      await service.requestCancellation(result.booking.id, "schedule_conflict", userId);
+
+      const dashboard = await service.getOpsDashboard("ops-user");
+      expect(dashboard.supportQueue).toBeDefined();
+      expect(dashboard.supportQueue.length).toBeGreaterThanOrEqual(1);
+      expect(dashboard.overview.pendingSupportRequests).toBeGreaterThanOrEqual(1);
     });
   });
 });

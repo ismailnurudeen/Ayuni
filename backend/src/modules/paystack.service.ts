@@ -36,6 +36,19 @@ export type PaystackVerifyResponse = {
   };
 };
 
+export type PaystackRefundResponse = {
+  status: boolean;
+  message: string;
+  data: {
+    transaction: { reference: string };
+    id: number;
+    amount: number;
+    currency: string;
+    status: string;
+    created_at: string;
+  };
+};
+
 @Injectable()
 export class PaystackService {
   private readonly secretKey: string;
@@ -152,5 +165,43 @@ export class PaystackService {
 
   isPaymentFailed(status: string): boolean {
     return status === "failed" || status === "abandoned";
+  }
+
+  async refundTransaction(reference: string, amountInKobo?: number): Promise<PaystackRefundResponse> {
+    if (this.secretKey === "TEST_MODE") {
+      return {
+        status: true,
+        message: "Refund has been queued",
+        data: {
+          transaction: { reference },
+          id: 9999999,
+          amount: amountInKobo || 350000,
+          currency: "NGN",
+          status: "processed",
+          created_at: new Date().toISOString()
+        }
+      };
+    }
+
+    const body: Record<string, unknown> = { transaction: reference };
+    if (amountInKobo !== undefined) {
+      body.amount = amountInKobo;
+    }
+
+    const response = await fetch(`${this.baseUrl}/refund`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.secretKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(`Paystack refund failed: ${error.message}`);
+    }
+
+    return response.json();
   }
 }
