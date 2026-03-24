@@ -13,6 +13,7 @@ import io.ktor.client.call.body
 import io.ktor.client.plugins.HttpSend
 import io.ktor.client.plugins.plugin
 import io.ktor.client.request.get
+import io.ktor.client.request.delete
 import io.ktor.client.request.header
 import io.ktor.client.request.put
 import io.ktor.client.request.post
@@ -21,7 +22,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
-import kotlinx.datetime.Instant
+import kotlinx.datetime.*
 
 class AyuniApiClient(
     private val tokenStorage: TokenStorage,
@@ -77,7 +78,7 @@ class AyuniApiClient(
             setBody(PhoneOtpRequest(phoneNumber = phoneNumber))
         }.body<PhoneOtpResponse>()
 
-    suspend fun verifyPhoneOtp(phoneNumber: String, code: String, deviceInfo: String? = null): BootstrapPayload {
+    suspend fun verifyPhoneOtp(phoneNumber: String, code: String, deviceInfo: String? = null): PhoneOtpVerifyResponse {
         val response = httpClient.post("$baseUrl/auth/phone/verify") {
             contentType(ContentType.Application.Json)
             setBody(PhoneOtpVerifyRequest(phoneNumber = phoneNumber, code = code, deviceInfo = deviceInfo))
@@ -93,11 +94,7 @@ class AyuniApiClient(
             )
         }
 
-        return when {
-            response.bootstrap != null -> response.bootstrap
-            response.verified -> getBootstrap()
-            else -> throw IllegalStateException("Invalid verification code")
-        }
+        return response
     }
 
     suspend fun logout(): Boolean {
@@ -179,7 +176,7 @@ class AyuniApiClient(
         }.body<MediaUploadResponse>()
 
     suspend fun deleteMedia(mediaId: String): DeleteMediaResponse =
-        httpClient.post("$baseUrl/mobile/media/$mediaId") {
+        httpClient.delete("$baseUrl/mobile/media/$mediaId") {
             contentType(ContentType.Application.Json)
         }.body<DeleteMediaResponse>()
 

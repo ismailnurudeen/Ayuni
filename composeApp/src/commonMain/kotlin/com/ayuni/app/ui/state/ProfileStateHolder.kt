@@ -157,6 +157,31 @@ class ProfileStateHolder(
         }
     }
 
+    fun reorderMedia(mediaIds: List<String>, onSuccess: () -> Unit = {}) {
+        scope.launch {
+            _isLoading.value = true
+            _errorMessage.value = null
+
+            repository.reorderMedia(mediaIds)
+                .onSuccess {
+                    repository.getBootstrap()
+                        .onSuccess { bootstrap ->
+                            onBootstrapReceived(bootstrap)
+                            onSuccess()
+                        }
+                        .onFailure { error ->
+                            logError("ProfileStateHolder", "Failed to refresh after reorder", error)
+                        }
+                }
+                .onFailure { error ->
+                    logError("ProfileStateHolder", "Failed to reorder media", error)
+                    _errorMessage.value = error.message ?: "Could not reorder media."
+                }
+
+            _isLoading.value = false
+        }
+    }
+
     fun clearError() {
         _errorMessage.value = null
     }

@@ -51,12 +51,14 @@ fun AyuniApp() {
 
     // Create state holders for each feature domain
     val appStateHolder = rememberAppStateHolder(repository, tokenStorage)
-    val onboardingStateHolder = rememberOnboardingStateHolder(repository, tokenStorage) { bootstrap ->
+
+    var userMedia by remember { mutableStateOf<List<com.ayuni.app.data.api.ProfileMedia>>(emptyList()) }
+
+    val roundStateHolder = rememberRoundStateHolder(repository) { bootstrap ->
         appStateHolder.applyBootstrap(bootstrap)
-        roundStateHolder.applyReactionsFromBootstrap(bootstrap.reactions)
         userMedia = bootstrap.media
     }
-    val roundStateHolder = rememberRoundStateHolder(repository) { bootstrap ->
+    val onboardingStateHolder = rememberOnboardingStateHolder(repository, tokenStorage) { bootstrap ->
         appStateHolder.applyBootstrap(bootstrap)
         roundStateHolder.applyReactionsFromBootstrap(bootstrap.reactions)
         userMedia = bootstrap.media
@@ -72,7 +74,6 @@ fun AyuniApp() {
     var profileScreen by remember { mutableStateOf(ProfileScreen.Hub) }
     var selectedDrawerProfileId by remember { mutableStateOf<String?>(null) }
     var onboardingStep by remember { mutableStateOf(OnboardingFlowStep.Welcome) }
-    var userMedia by remember { mutableStateOf<List<com.ayuni.app.data.api.ProfileMedia>>(emptyList()) }
     var reportingBooking by remember { mutableStateOf<com.ayuni.app.domain.DateBooking?>(null) }
 
     // Extract state from holders
@@ -105,12 +106,12 @@ fun AyuniApp() {
             val targetHour = 20
             val targetMinute = 0
 
-            var targetDateTime = LocalDateTime(now.year, now.month, now.dayOfMonth, targetHour, targetMinute, 0)
+            var targetDateTime = LocalDateTime(now.year, now.month, now.day, targetHour, targetMinute, 0)
 
             if (now.hour >= targetHour && (now.hour > targetHour || now.minute >= targetMinute)) {
                 val tomorrowInstant = nowInstant.plus(1, DateTimeUnit.DAY, TimeZone.currentSystemDefault())
                 val tomorrow = tomorrowInstant.toLocalDateTime(TimeZone.currentSystemDefault())
-                targetDateTime = LocalDateTime(tomorrow.year, tomorrow.month, tomorrow.dayOfMonth, targetHour, targetMinute, 0)
+                targetDateTime = LocalDateTime(tomorrow.year, tomorrow.month, tomorrow.day, targetHour, targetMinute, 0)
             }
 
             val targetInstant = targetDateTime.toInstant(TimeZone.currentSystemDefault())
@@ -284,19 +285,22 @@ fun AyuniApp() {
                                 ProfileScreen.EditProfile -> EditProfileScreen(
                                     padding = innerPadding,
                                     profile = state.editableProfile,
+                                    media = userMedia,
+                                    isLoading = profileStateHolder.isLoading.value,
+                                    errorMessage = profileStateHolder.errorMessage.value,
                                     onBack = { profileScreen = ProfileScreen.Hub },
                                     onPreview = { profileScreen = ProfileScreen.ProfilePreview },
                                     onNavigateToEdit = { profileScreen = it },
                                     onUploadMedia = { dataUrl ->
                                         profileStateHolder.uploadMedia(dataUrl)
                                     },
-                                    onDeleteMedia = { index ->
-                                        // Find the media ID by matching index in the media list
-                                        val media = userMedia.getOrNull(index)
-                                        if (media != null) {
-                                            profileStateHolder.deleteMedia(media.id)
-                                        }
-                                    }
+                                    onDeleteMedia = { mediaId ->
+                                        profileStateHolder.deleteMedia(mediaId)
+                                    },
+                                    onReorderMedia = { mediaIds ->
+                                        profileStateHolder.reorderMedia(mediaIds)
+                                    },
+                                    onClearError = { profileStateHolder.clearError() },
                                 )
 
                                 ProfileScreen.EditBio -> EditBioScreen(
