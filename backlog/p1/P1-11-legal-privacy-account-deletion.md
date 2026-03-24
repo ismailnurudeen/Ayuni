@@ -1,0 +1,105 @@
+# P1-11 Legal/Privacy/Account Deletion
+
+## Objective
+Implement account deletion, data export, and privacy compliance flows so users can exercise data rights and the product meets Nigerian Data Protection Regulation (NDPR) and app store requirements.
+
+## Why This Exists
+Apple App Store and Google Play both require apps to offer account deletion. NDPR (Nigeria's data protection law) requires data access and erasure capabilities. Without these flows, the app cannot pass store review and operates non-compliantly with data protection law.
+
+## Scope
+
+### Account Deletion
+
+- User-initiated account deletion from Settings screen
+- Confirmation flow with clear explanation of what will be deleted
+- Grace period (e.g., 30 days) before permanent deletion, with ability to cancel
+- Backend soft-delete: mark account as `pending_deletion` with scheduled hard-delete
+- Hard-delete process: remove or anonymize user data, profile media files, chat messages, bookings (retain anonymized financial records for legal compliance)
+- Cancel active bookings and notify matched users
+- Revoke all sessions on deletion request
+
+### Data Export
+
+- User can request data export from Settings
+- Export includes: profile data, preferences, booking history, verification status, notification history
+- Delivered as downloadable JSON or sent to registered email
+- Rate-limited (max 1 export per 24 hours)
+
+### Privacy Policy Consent
+
+- Track consent version per user (already partially in P0-04)
+- Re-prompt consent when privacy policy version changes
+- Store consent timestamp and version in database
+
+### Legal
+
+- Terms of Service and Privacy Policy links accessible from Settings and onboarding
+- In-app display of current ToS/Privacy Policy version
+
+## Non-Goals
+
+- GDPR compliance (EU-specific requirements beyond NDPR scope)
+- Right to data portability to another service
+- Automated regulatory reporting
+- Cookie consent (not applicable to mobile)
+
+## Dependencies
+
+- `P0-04` (onboarding — terms consent recording)
+- `P0-01` (persistence — complete)
+- `P0-02` (auth — session management)
+- `P0-05` (media — file cleanup on deletion)
+
+## Affected Areas
+
+- `backend/src/modules/` — new `account.service.ts` or extend `app.service.ts`
+- `backend/src/modules/mobile.controller.ts` — deletion and export endpoints
+- `backend/src/modules/auth.service.ts` — session revocation on deletion
+- `backend/migrations/` — add `deletion_requested_at`, `deletion_scheduled_at` to users table
+- `composeApp/src/commonMain/kotlin/com/ayuni/app/ui/screens/profile/` — deletion and export UI in Settings
+- `composeApp/src/commonMain/kotlin/com/ayuni/app/data/api/AyuniApiClient.kt` — deletion/export endpoints
+
+## Implementation Notes
+
+- Soft-delete sets `deletion_requested_at` and `deletion_scheduled_at = now + 30 days`.
+- A scheduled job (cron or background worker) processes hard-deletes for accounts past their scheduled date.
+- Hard-delete should anonymize booking/payment records (replace user ID with hash, remove name/phone) rather than deleting them, to preserve financial audit trail.
+- Media files in `uploads/` directory must be physically deleted during hard-delete.
+- Data export should exclude sensitive internal fields (password hashes, tokens, internal IDs).
+- Re-authentication required before account deletion (confirm password or OTP).
+
+## Acceptance Criteria
+
+- [ ] Users can request account deletion from Settings.
+- [ ] Deletion request shows clear confirmation with 30-day grace period explanation.
+- [ ] Account marked as `pending_deletion` with scheduled hard-delete date.
+- [ ] User can cancel deletion within grace period and restore account.
+- [ ] All sessions revoked immediately on deletion request.
+- [ ] Hard-delete process removes/anonymizes all personal data.
+- [ ] Media files deleted from storage during hard-delete.
+- [ ] Users can request data export and receive downloadable JSON.
+- [ ] Data export rate-limited to 1 per 24 hours.
+- [ ] Privacy policy consent version tracked per user.
+- [ ] Re-consent prompted when policy version changes.
+
+## Review Checklist
+
+- [ ] Hard-delete anonymizes financial records instead of deleting them.
+- [ ] No orphaned media files after account deletion.
+- [ ] Re-authentication enforced before deletion request.
+- [ ] Export excludes password hashes, tokens, and internal IDs.
+- [ ] Scheduled deletion job handles edge cases (user re-registered with same phone).
+- [ ] NDPR compliance requirements reviewed against implementation.
+
+## Test Checklist
+
+- [ ] Account deletion request flow tested end-to-end.
+- [ ] Cancellation within grace period restores account.
+- [ ] Hard-delete removes profile, media, and personal data.
+- [ ] Hard-delete retains anonymized booking/payment records.
+- [ ] Data export returns correct user data in JSON format.
+- [ ] Export rate limiting enforced.
+- [ ] Session revocation verified after deletion request.
+- [ ] Consent version tracking works on policy update.
+
+## Completion Notes
