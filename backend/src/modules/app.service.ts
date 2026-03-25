@@ -5,7 +5,6 @@ import { DatabaseService } from "../database/database.service";
 import { AuthService } from "./auth.service";
 import { OtpService } from "./otp.service";
 import { TwilioSmsService } from "./sms.service";
-import { FirebaseAuthService } from "./firebase-auth.service";
 import { MediaService } from "./media.service";
 import { PaystackService } from "./paystack.service";
 import { ReminderService } from "./reminder.service";
@@ -101,7 +100,6 @@ export class AppService implements OnModuleInit {
     private readonly authService: AuthService,
     private readonly otpService: OtpService,
     private readonly smsService: TwilioSmsService,
-    private readonly firebaseAuthService: FirebaseAuthService,
     private readonly mediaService: MediaService,
     private readonly paystackService: PaystackService,
     private readonly reminderService: ReminderService,
@@ -233,65 +231,48 @@ export class AppService implements OnModuleInit {
   }
 
   /**
-   * Verify phone number via Firebase Phone Auth.
-   * The mobile app handles OTP send/verify via Firebase SDK,
-   * then sends the resulting Firebase ID token here.
+   * Sign in via Firebase Phone Auth.
+   * Firebase handles OTP on the client; the backend verifies the ID token
+   * via AuthService and updates user state.
    */
-  async verifyFirebasePhone(firebaseIdToken: string, deviceInfo?: string) {
-
-    const firebaseResult = await this.firebaseAuthService.verifyIdToken(firebaseIdToken);
-    if (!firebaseResult) {
-      return {
-        verified: false,
-        error: "invalid_token",
-      };
+  async signIn(firebaseIdToken: string, deviceInfo?: string) {
+    // AuthService handles Firebase token verification + session creation
+    const authResult = await this.authService.signInWithFirebase(firebaseIdToken, deviceInfo);
+    if ("error" in authResult) {
+      return { verified: false, error: authResult.error };
     }
 
-    const normalizedPhone = this.otpService.normalizeNigerianPhone(firebaseResult.phoneNumber);
+    const { userId, phoneNumber, tokens } = authResult;
 
-    if (!this.otpService.validateNigerianPhone(normalizedPhone)) {
-      return {
-        verified: false,
-        error: "invalid_phone",
-      };
+    if (!this.otpService.validateNigerianPhone(phoneNumber)) {
+      return { verified: false, error: "invalid_phone" };
     }
 
-    const userId = normalizedPhone;
     await this.ensureUser(userId);
 
-    const result = await this.database.withTransaction(async (client) => {
+    await this.database.withTransaction(async (client) => {
       const state = await this.loadState(userId, client);
 
       state.verification.phoneVerified = true;
       state.accountSettings = {
         ...state.accountSettings,
-        phoneNumber: normalizedPhone
+        phoneNumber,
       };
       state.onboarding = {
         ...state.onboarding,
         step: "BasicProfile",
-        phoneNumber: normalizedPhone
+        phoneNumber,
       };
       state.pendingPhoneNumber = "";
-      await client.query("UPDATE users SET phone_number = $2, updated_at = NOW() WHERE id = $1", [userId, normalizedPhone]);
+      await client.query("UPDATE users SET phone_number = $2, updated_at = NOW() WHERE id = $1", [userId, phoneNumber]);
       await this.saveState(userId, state, client);
-
-      const tokens = await this.authService.createSession(userId, deviceInfo, client);
-      return { success: true, tokens };
     });
 
     return {
       verified: true,
-      ...result.tokens,
-      bootstrap: await this.getBootstrap(userId)
+      ...tokens,
+      bootstrap: await this.getBootstrap(userId),
     };
-  }
-
-  /**
-   * Returns the active auth provider based on AUTH_PROVIDER env var.
-   */
-  getAuthProvider(): "firebase" | "twilio" {
-    return process.env.AUTH_PROVIDER === "firebase" ? "firebase" : "twilio";
   }
 
   async completeBasicOnboarding(body: BasicOnboardingPayload, rawUserId?: string) {

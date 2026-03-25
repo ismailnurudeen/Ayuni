@@ -1,5 +1,6 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { AuthService } from "./auth.service";
+import { FirebaseAuthService } from "./firebase-auth.service";
 import { DatabaseService } from "../database/database.service";
 
 describe("AuthService", () => {
@@ -8,7 +9,7 @@ describe("AuthService", () => {
 
   beforeAll(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [DatabaseService, AuthService]
+      providers: [DatabaseService, FirebaseAuthService, AuthService]
     }).compile();
 
     databaseService = module.get<DatabaseService>(DatabaseService);

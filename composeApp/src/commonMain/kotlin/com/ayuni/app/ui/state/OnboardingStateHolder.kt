@@ -16,7 +16,7 @@ import kotlinx.coroutines.launch
 
 /**
  * State holder for onboarding flow (auth, phone verification, basic profile).
- * Supports both Firebase Phone Auth (MVP default) and Twilio OTP as fallback.
+ * Uses Firebase Phone Auth — Firebase handles OTP, backend verifies the ID token.
  */
 class OnboardingStateHolder(
     private val repository: AyuniRepository,
@@ -37,30 +37,9 @@ class OnboardingStateHolder(
     private val _resendCooldownSeconds = mutableStateOf(0)
     val resendCooldownSeconds: State<Int> = _resendCooldownSeconds
 
-    /** "firebase" (default) or "twilio" */
-    private val _authProvider = mutableStateOf("firebase")
-    val authProvider: State<String> = _authProvider
-
-    init {
-        // Fetch the configured auth provider from the backend
-        scope.launch {
-            repository.getAuthProvider()
-                .onSuccess { provider -> _authProvider.value = provider }
-                .onFailure { /* default stays "firebase" */ }
-        }
-    }
-
-    // ── Phone entry: start verification ─────────────────────────
+    // ── Phone entry: start Firebase verification ────────────────
 
     fun requestPhoneOtp(phoneNumber: String, onSuccess: () -> Unit = {}) {
-        if (_authProvider.value == "firebase") {
-            requestFirebaseVerification(phoneNumber, onSuccess)
-        } else {
-            requestTwilioOtp(phoneNumber, onSuccess)
-        }
-    }
-
-    private fun requestFirebaseVerification(phoneNumber: String, onSuccess: () -> Unit) {
         _isSubmitting.value = true
         _errorMessage.value = null
 
@@ -75,7 +54,7 @@ class OnboardingStateHolder(
             onVerified = { idToken ->
                 // Auto-verified (e.g. SMS Retriever) — send token to backend
                 _pendingPhoneNumber.value = phoneNumber
-                scope.launch { sendFirebaseTokenToBackend(idToken) }
+                scope.launch { sendTokenToBackend(idToken) }
             },
             onError = { message ->
                 _isSubmitting.value = false
@@ -84,44 +63,16 @@ class OnboardingStateHolder(
         )
     }
 
-    private fun requestTwilioOtp(phoneNumber: String, onSuccess: () -> Unit) {
-        scope.launch {
-            _isSubmitting.value = true
-            _errorMessage.value = null
-
-            repository.requestPhoneOtp(phoneNumber)
-                .onSuccess { retryAfterSeconds ->
-                    _pendingPhoneNumber.value = phoneNumber
-                    _resendCooldownSeconds.value = retryAfterSeconds
-                    onSuccess()
-                }
-                .onFailure { error ->
-                    logError("OnboardingStateHolder", "Failed to request OTP", error)
-                    _errorMessage.value = error.message ?: "Could not send code right now."
-                }
-
-            _isSubmitting.value = false
-        }
-    }
-
-    // ── OTP entry: verify code ──────────────────────────────────
+    // ── OTP entry: submit code to Firebase ──────────────────────
 
     fun verifyPhoneOtp(phoneNumber: String, code: String) {
-        if (_authProvider.value == "firebase") {
-            verifyFirebaseCode(code)
-        } else {
-            verifyTwilioCode(phoneNumber, code)
-        }
-    }
-
-    private fun verifyFirebaseCode(code: String) {
         _isSubmitting.value = true
         _errorMessage.value = null
 
         phoneAuthBridge.submitVerificationCode(
             code = code,
             onVerified = { idToken ->
-                scope.launch { sendFirebaseTokenToBackend(idToken) }
+                scope.launch { sendTokenToBackend(idToken) }
             },
             onError = { message ->
                 _isSubmitting.value = false
@@ -130,37 +81,19 @@ class OnboardingStateHolder(
         )
     }
 
-    private fun verifyTwilioCode(phoneNumber: String, code: String) {
-        scope.launch {
-            _isSubmitting.value = true
-            _errorMessage.value = null
+    // ── Backend sign-in ─────────────────────────────────────────
 
-            repository.verifyPhoneOtp(phoneNumber, code)
-                .onSuccess { bootstrap ->
-                    onBootstrapReceived(bootstrap)
-                }
-                .onFailure { error ->
-                    logError("OnboardingStateHolder", "Failed to verify OTP", error)
-                    _errorMessage.value = error.message ?: "That code did not work."
-                }
-
-            _isSubmitting.value = false
-        }
-    }
-
-    // ── Firebase backend verification ───────────────────────────
-
-    private suspend fun sendFirebaseTokenToBackend(idToken: String) {
+    private suspend fun sendTokenToBackend(idToken: String) {
         _isSubmitting.value = true
         _errorMessage.value = null
 
-        repository.verifyFirebaseToken(idToken)
+        repository.signIn(idToken)
             .onSuccess { bootstrap ->
                 _isSubmitting.value = false
                 onBootstrapReceived(bootstrap)
             }
             .onFailure { error ->
-                logError("OnboardingStateHolder", "Failed to verify Firebase token", error)
+                logError("OnboardingStateHolder", "Sign-in failed", error)
                 _isSubmitting.value = false
                 _errorMessage.value = error.message ?: "Verification failed. Please try again."
             }

@@ -49,13 +49,11 @@ class AyuniRepository(private val apiClient: AyuniApiClient) {
     }
 
     /** Ask backend which auth provider to use. Defaults to "firebase" on failure. */
-    suspend fun getAuthProvider(): Result<String> = runCatching {
-        apiClient.getAuthProvider().provider
-    }
+    suspend fun getAuthProvider(): Result<String> = Result.success("firebase")
 
-    /** Verify a Firebase ID token with the backend and receive session tokens + bootstrap. */
-    suspend fun verifyFirebaseToken(idToken: String): Result<BootstrapPayload> = runCatching {
-        val response = apiClient.verifyFirebaseToken(idToken)
+    /** Sign in with a Firebase ID token. Returns bootstrap on success. */
+    suspend fun signIn(idToken: String): Result<BootstrapPayload> = runCatching {
+        val response = apiClient.signIn(idToken)
 
         if (!response.verified) {
             val errorMessage = when (response.error) {

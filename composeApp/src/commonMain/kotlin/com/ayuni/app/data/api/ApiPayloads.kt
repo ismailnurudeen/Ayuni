@@ -158,21 +158,16 @@ data class LogoutResponse(
     val success: Boolean,
 )
 
-// ── Firebase Phone Auth ─────────────────────────────────────────────
+// ── Sign-in (Firebase Phone Auth) ───────────────────────────────────
 
 @Serializable
-data class AuthProviderResponse(
-    val provider: String, // "firebase" or "twilio"
-)
-
-@Serializable
-data class FirebaseVerifyRequest(
+data class SignInRequest(
     val idToken: String,
     val deviceInfo: String? = null,
 )
 
 @Serializable
-data class FirebaseVerifyResponse(
+data class SignInResponse(
     val verified: Boolean = false,
     val accessToken: String? = null,
     val refreshToken: String? = null,

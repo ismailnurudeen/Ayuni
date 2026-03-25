@@ -2,7 +2,14 @@ import { Injectable } from "@nestjs/common";
 import { PoolClient } from "pg";
 import { randomBytes, createHash } from "crypto";
 import { DatabaseService } from "../database/database.service";
+import { FirebaseAuthService } from "./firebase-auth.service";
 import { AuthTokens, Session } from "./app.types";
+
+export interface SignInResult {
+  userId: string;
+  phoneNumber: string;
+  tokens: AuthTokens;
+}
 
 @Injectable()
 export class AuthService {
@@ -11,7 +18,10 @@ export class AuthService {
   // Refresh tokens expire in 30 days
   private readonly REFRESH_TOKEN_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000;
 
-  constructor(private readonly database: DatabaseService) {}
+  constructor(
+    private readonly database: DatabaseService,
+    private readonly firebaseAuthService: FirebaseAuthService,
+  ) {}
 
  /**
    * Create a new authenticated session for a user after successful verification
@@ -189,6 +199,29 @@ export class AuthService {
     );
 
     return result.rows.length;
+  }
+
+  /**
+   * Authenticate via Firebase Phone Auth and create a session.
+   * Firebase handles phone OTP verification on the client side;
+   * the backend verifies the resulting ID token and signs the user in.
+   */
+  async signInWithFirebase(
+    firebaseIdToken: string,
+    deviceInfo?: string,
+    client?: PoolClient
+  ): Promise<SignInResult | { error: string }> {
+    const firebaseResult = await this.firebaseAuthService.verifyIdToken(firebaseIdToken);
+    if (!firebaseResult) {
+      return { error: "invalid_token" };
+    }
+
+    const tokens = await this.createSession(firebaseResult.phoneNumber, deviceInfo, client);
+    return {
+      userId: firebaseResult.phoneNumber,
+      phoneNumber: firebaseResult.phoneNumber,
+      tokens,
+    };
   }
 
   private generateToken(): string {

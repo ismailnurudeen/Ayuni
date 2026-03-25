@@ -37,7 +37,8 @@ describe("AppService", () => {
     pool = new adapter.Pool();
     databaseService = new DatabaseService({ pool });
     await databaseService.onModuleInit();
-    authService = new AuthService(databaseService);
+    firebaseAuthService = new FirebaseAuthService();
+    authService = new AuthService(databaseService, firebaseAuthService);
     otpService = new OtpService();
     smsService = new TwilioSmsService();
     mediaService = new MediaService(databaseService);
@@ -46,8 +47,7 @@ describe("AppService", () => {
     reminderService = new ReminderService(databaseService, whatsappService, smsService);
     pushService = new PushService(databaseService);
     analyticsService = new AnalyticsService(databaseService);
-    firebaseAuthService = new FirebaseAuthService();
-    service = new AppService(databaseService, authService, otpService, smsService, firebaseAuthService, mediaService, paystackService, reminderService, pushService, analyticsService);
+    service = new AppService(databaseService, authService, otpService, smsService, mediaService, paystackService, reminderService, pushService, analyticsService);
     await service.onModuleInit();
   });
 
@@ -95,7 +95,8 @@ describe("AppService", () => {
 
     const restartedDatabaseService = new DatabaseService({ pool });
     await restartedDatabaseService.onModuleInit();
-    const restartedAuthService = new AuthService(restartedDatabaseService);
+    const restartedFirebaseAuthService = new FirebaseAuthService();
+    const restartedAuthService = new AuthService(restartedDatabaseService, restartedFirebaseAuthService);
     const restartedOtpService = new OtpService();
     const restartedSmsService = new TwilioSmsService();
     const restartedMediaService = new MediaService(restartedDatabaseService);
@@ -104,8 +105,7 @@ describe("AppService", () => {
     const restartedReminderService = new ReminderService(restartedDatabaseService, restartedWhatsAppService, restartedSmsService);
     const restartedPushService = new PushService(restartedDatabaseService);
     const restartedAnalyticsService = new AnalyticsService(restartedDatabaseService);
-    const restartedFirebaseAuthService = new FirebaseAuthService();
-    const restartedService = new AppService(restartedDatabaseService, restartedAuthService, restartedOtpService, restartedSmsService, restartedFirebaseAuthService, restartedMediaService, restartedPaystackService, restartedReminderService, restartedPushService, restartedAnalyticsService);
+    const restartedService = new AppService(restartedDatabaseService, restartedAuthService, restartedOtpService, restartedSmsService, restartedMediaService, restartedPaystackService, restartedReminderService, restartedPushService, restartedAnalyticsService);
     await restartedService.onModuleInit();
 
     const bootstrap = await restartedService.getBootstrap("persist-test-user");
@@ -581,7 +581,7 @@ describe("AppService", () => {
       );
 
       // Simulate restart by creating new service instance
-      const newService = new AppService(databaseService, authService, otpService, smsService, firebaseAuthService, mediaService, paystackService, reminderService, pushService, analyticsService);
+      const newService = new AppService(databaseService, authService, otpService, smsService, mediaService, paystackService, reminderService, pushService, analyticsService);
       const restartedBootstrap = await newService.getBootstrap("booking-user-4");
 
       const booking = restartedBootstrap.bookings.find((b) => b.id === result.bookingId);
