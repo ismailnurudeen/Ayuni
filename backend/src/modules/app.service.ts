@@ -236,19 +236,21 @@ export class AppService implements OnModuleInit {
    * via AuthService and updates user state.
    */
   async signIn(firebaseIdToken: string, deviceInfo?: string) {
-    // AuthService handles Firebase token verification + session creation
-    const authResult = await this.authService.signInWithFirebase(firebaseIdToken, deviceInfo);
+    // Verify Firebase token first, before creating any DB rows
+    const authResult = await this.authService.verifyFirebaseToken(firebaseIdToken);
     if ("error" in authResult) {
       return { verified: false, error: authResult.error };
     }
 
-    const { userId, phoneNumber, tokens } = authResult;
+    const { userId, phoneNumber } = authResult;
 
     if (!this.otpService.validateNigerianPhone(phoneNumber)) {
       return { verified: false, error: "invalid_phone" };
     }
 
+    // Ensure user row exists before creating session (sessions.user_id FK)
     await this.ensureUser(userId);
+    const tokens = await this.authService.createSession(userId, deviceInfo);
 
     await this.database.withTransaction(async (client) => {
       const state = await this.loadState(userId, client);

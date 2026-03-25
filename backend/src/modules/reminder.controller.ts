@@ -2,7 +2,7 @@ import { Body, Controller, Get, Headers, HttpCode, Post, Put, Query } from "@nes
 import { ReminderService } from "./reminder.service";
 import { ReminderPreferences } from "./app.types";
 
-@Controller("v1")
+@Controller()
 export class ReminderController {
   constructor(private readonly reminderService: ReminderService) {}
 

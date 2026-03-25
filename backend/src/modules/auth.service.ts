@@ -5,12 +5,6 @@ import { DatabaseService } from "../database/database.service";
 import { FirebaseAuthService } from "./firebase-auth.service";
 import { AuthTokens, Session } from "./app.types";
 
-export interface SignInResult {
-  userId: string;
-  phoneNumber: string;
-  tokens: AuthTokens;
-}
-
 @Injectable()
 export class AuthService {
   // Access tokens expire in 15 minutes
@@ -206,21 +200,16 @@ export class AuthService {
    * Firebase handles phone OTP verification on the client side;
    * the backend verifies the resulting ID token and signs the user in.
    */
-  async signInWithFirebase(
-    firebaseIdToken: string,
-    deviceInfo?: string,
-    client?: PoolClient
-  ): Promise<SignInResult | { error: string }> {
+  async verifyFirebaseToken(
+    firebaseIdToken: string
+  ): Promise<{ userId: string; phoneNumber: string } | { error: string }> {
     const firebaseResult = await this.firebaseAuthService.verifyIdToken(firebaseIdToken);
     if (!firebaseResult) {
       return { error: "invalid_token" };
     }
-
-    const tokens = await this.createSession(firebaseResult.phoneNumber, deviceInfo, client);
     return {
       userId: firebaseResult.phoneNumber,
       phoneNumber: firebaseResult.phoneNumber,
-      tokens,
     };
   }
 
