@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION", "DEPRECATION_ERROR")
+
 plugins {
     id("org.jetbrains.kotlin.multiplatform")
     id("org.jetbrains.kotlin.plugin.serialization")
@@ -5,6 +7,7 @@ plugins {
     id("org.jetbrains.compose")
     id("com.android.application")
     id("app.cash.sqldelight")
+    id("com.google.gms.google-services")
 }
 
 val apiBaseUrl = project.findProperty("API_BASE_URL")?.toString()
@@ -57,6 +60,8 @@ kotlin {
                 implementation("androidx.core:core-ktx:1.15.0")
                 implementation("androidx.security:security-crypto:1.1.0")
                 implementation("io.ktor:ktor-client-okhttp:2.3.12")
+                implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
+                implementation("com.google.firebase:firebase-auth")
             }
         }
     }

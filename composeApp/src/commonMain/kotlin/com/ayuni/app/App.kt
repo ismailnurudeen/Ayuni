@@ -22,6 +22,7 @@ import com.ayuni.app.data.api.AyuniApiClient
 import com.ayuni.app.data.analytics.AnalyticsTracker
 import com.ayuni.app.data.repository.AyuniRepository
 import com.ayuni.app.platform.createTokenStorage
+import com.ayuni.app.platform.createPhoneAuthBridge
 import com.ayuni.app.ui.AppRoute
 import com.ayuni.app.ui.design.AyuniTheme
 import com.ayuni.app.ui.navigation.AyuniBottomBar
@@ -53,6 +54,7 @@ fun AyuniApp() {
     val apiClient = remember { AyuniApiClient(tokenStorage) }
     val repository = remember { AyuniRepository(apiClient) }
     val analytics = remember { AnalyticsTracker(apiClient) }
+    val phoneAuthBridge = remember { createPhoneAuthBridge() }
 
     // Flush analytics when leaving composition
     DisposableEffect(Unit) { onDispose { analytics.flush() } }
@@ -66,7 +68,7 @@ fun AyuniApp() {
         appStateHolder.applyBootstrap(bootstrap)
         userMedia = bootstrap.media
     }
-    val onboardingStateHolder = rememberOnboardingStateHolder(repository, tokenStorage) { bootstrap ->
+    val onboardingStateHolder = rememberOnboardingStateHolder(repository, tokenStorage, phoneAuthBridge) { bootstrap ->
         appStateHolder.applyBootstrap(bootstrap)
         roundStateHolder.applyReactionsFromBootstrap(bootstrap.reactions)
         userMedia = bootstrap.media

@@ -5,4 +5,5 @@ plugins {
     id("org.jetbrains.compose") version "1.10.3" apply false
     id("com.android.application") version "9.1.0" apply false
     id("app.cash.sqldelight") version "2.3.2" apply false
+    id("com.google.gms.google-services") version "4.4.2" apply false
 }

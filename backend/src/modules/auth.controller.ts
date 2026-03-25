@@ -1,4 +1,4 @@
-import { Body, Controller, Headers, Post, Put, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Headers, Post, Put, UseGuards } from "@nestjs/common";
 import { AppService } from "./app.service";
 import { AuthService } from "./auth.service";
 import { AuthGuard, UserId } from "./auth.guard";
@@ -10,6 +10,17 @@ export class AuthController {
     private readonly authService: AuthService
   ) {}
 
+  /**
+   * Returns the current auth provider so the mobile app knows
+   * whether to use Firebase or Twilio OTP flow.
+   */
+  @Get("provider")
+  getProvider() {
+    return { provider: this.appService.getAuthProvider() };
+  }
+
+  // ── Twilio OTP flow (kept for fallback) ──────────────────────
+
   @Post("phone")
   requestPhone(@Body() body: { phoneNumber: string }) {
     return this.appService.requestPhoneOtp(body.phoneNumber);
@@ -20,6 +31,15 @@ export class AuthController {
     @Body() body: { phoneNumber: string; code: string; deviceInfo?: string }
   ) {
     return this.appService.verifyPhoneOtp(body.phoneNumber, body.code, body.deviceInfo);
+  }
+
+  // ── Firebase Phone Auth flow (MVP default) ───────────────────
+
+  @Post("firebase/verify")
+  async verifyFirebasePhone(
+    @Body() body: { idToken: string; deviceInfo?: string }
+  ) {
+    return this.appService.verifyFirebasePhone(body.idToken, body.deviceInfo);
   }
 
   @Post("refresh")

@@ -8,7 +8,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.datetime.Clock
 
 /**
  * Lightweight analytics tracker that batches events and flushes periodically.
@@ -27,7 +26,7 @@ class AnalyticsTracker(
             val event = AnalyticsEventPayload(
                 eventName = eventName,
                 properties = properties,
-                timestamp = Clock.System.now().toString(),
+                timestamp = kotlin.time.Clock.System.now().toString(),
             )
             mutex.withLock { buffer.add(event) }
             if (buffer.size >= batchSize) {

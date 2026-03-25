@@ -48,6 +48,27 @@ class AyuniRepository(private val apiClient: AyuniApiClient) {
         response.bootstrap ?: throw Exception("Verification successful but no data received")
     }
 
+    /** Ask backend which auth provider to use. Defaults to "firebase" on failure. */
+    suspend fun getAuthProvider(): Result<String> = runCatching {
+        apiClient.getAuthProvider().provider
+    }
+
+    /** Verify a Firebase ID token with the backend and receive session tokens + bootstrap. */
+    suspend fun verifyFirebaseToken(idToken: String): Result<BootstrapPayload> = runCatching {
+        val response = apiClient.verifyFirebaseToken(idToken)
+
+        if (!response.verified) {
+            val errorMessage = when (response.error) {
+                "invalid_token" -> "Phone verification failed. Please try again."
+                "invalid_phone" -> "Please use a valid Nigerian phone number."
+                else -> "Verification failed. Please try again."
+            }
+            throw Exception(errorMessage)
+        }
+
+        response.bootstrap ?: throw Exception("Verification successful but no data received")
+    }
+
     suspend fun completeBasicOnboarding(
         firstName: String,
         birthDate: String,

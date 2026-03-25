@@ -16,6 +16,7 @@ import { AuthService } from "./auth.service";
 import { AuthGuard } from "./auth.guard";
 import { OtpService } from "./otp.service";
 import { TwilioSmsService } from "./sms.service";
+import { FirebaseAuthService } from "./firebase-auth.service";
 import { WhatsAppService } from "./whatsapp.service";
 import { ReminderService } from "./reminder.service";
 import { MediaService } from "./media.service";
@@ -39,6 +40,6 @@ import { DatabaseService } from "../database/database.service";
     ReminderController,
     AnalyticsController
   ],
-  providers: [DatabaseService, AppService, AuthService, AuthGuard, OtpService, TwilioSmsService, WhatsAppService, ReminderService, MediaService, PaystackService, PushService, AnalyticsService]
+  providers: [DatabaseService, AppService, AuthService, AuthGuard, OtpService, TwilioSmsService, FirebaseAuthService, WhatsAppService, ReminderService, MediaService, PaystackService, PushService, AnalyticsService]
 })  
 export class AppModule {}

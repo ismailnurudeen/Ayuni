@@ -10,6 +10,7 @@ import { ReminderService } from "./reminder.service";
 import { WhatsAppService } from "./whatsapp.service";
 import { PushService } from "./push.service";
 import { AnalyticsService } from "./analytics.service";
+import { FirebaseAuthService } from "./firebase-auth.service";
 import { AppService } from "./app.service";
 import { SafetyReport } from "./app.types";
 
@@ -25,6 +26,7 @@ describe("AppService", () => {
   let reminderService: ReminderService;
   let pushService: PushService;
   let analyticsService: AnalyticsService;
+  let firebaseAuthService: FirebaseAuthService;
   let service: AppService;
 
   beforeEach(async () => {
@@ -44,7 +46,8 @@ describe("AppService", () => {
     reminderService = new ReminderService(databaseService, whatsappService, smsService);
     pushService = new PushService(databaseService);
     analyticsService = new AnalyticsService(databaseService);
-    service = new AppService(databaseService, authService, otpService, smsService, mediaService, paystackService, reminderService, pushService, analyticsService);
+    firebaseAuthService = new FirebaseAuthService();
+    service = new AppService(databaseService, authService, otpService, smsService, firebaseAuthService, mediaService, paystackService, reminderService, pushService, analyticsService);
     await service.onModuleInit();
   });
 
@@ -66,23 +69,27 @@ describe("AppService", () => {
   });
 
   it("returns bootstrap data from persistence", async () => {
-    const bootstrap = await service.getBootstrap();
+    const bootstrap = await service.getBootstrap("test-user-1");
     expect(bootstrap.suggestions.length).toBeGreaterThan(0);
     expect(bootstrap.reactions).toEqual({});
-    expect(bootstrap.notifications.length).toBeGreaterThan(0);
+    expect(bootstrap.notifications).toEqual([]);
   });
 
   it("keeps data after service restart against the same database", async () => {
+    // Create a user first, then update their data
+    const userId = "persist-test-user";
+    await service.getBootstrap(userId);
+
     // Directly insert verified phone data (bypassing OTP flow for this test)
     await databaseService.withTransaction(async (client) => {
-      await client.query("UPDATE users SET phone_number = $1 WHERE id = $2", ["+2348012345678", "demo-user"]);
-      const state = await pool.query("SELECT * FROM user_states WHERE user_id = $1", ["demo-user"]);
+      await client.query("UPDATE users SET phone_number = $1 WHERE id = $2", ["+2348012345678", userId]);
+      const state = await pool.query("SELECT * FROM user_states WHERE user_id = $1", [userId]);
       const stateData = state.rows[0];
       stateData.verification = { ...stateData.verification, phoneVerified: true };
       stateData.account_settings = { ...stateData.account_settings, phoneNumber: "+2348012345678" };
       await client.query(
         "UPDATE user_states SET verification = $1, account_settings = $2 WHERE user_id = $3",
-        [JSON.stringify(stateData.verification), JSON.stringify(stateData.account_settings), "demo-user"]
+        [JSON.stringify(stateData.verification), JSON.stringify(stateData.account_settings), userId]
       );
     });
 
@@ -97,10 +104,11 @@ describe("AppService", () => {
     const restartedReminderService = new ReminderService(restartedDatabaseService, restartedWhatsAppService, restartedSmsService);
     const restartedPushService = new PushService(restartedDatabaseService);
     const restartedAnalyticsService = new AnalyticsService(restartedDatabaseService);
-    const restartedService = new AppService(restartedDatabaseService, restartedAuthService, restartedOtpService, restartedSmsService, restartedMediaService, restartedPaystackService, restartedReminderService, restartedPushService, restartedAnalyticsService);
+    const restartedFirebaseAuthService = new FirebaseAuthService();
+    const restartedService = new AppService(restartedDatabaseService, restartedAuthService, restartedOtpService, restartedSmsService, restartedFirebaseAuthService, restartedMediaService, restartedPaystackService, restartedReminderService, restartedPushService, restartedAnalyticsService);
     await restartedService.onModuleInit();
 
-    const bootstrap = await restartedService.getBootstrap("demo-user");
+    const bootstrap = await restartedService.getBootstrap("persist-test-user");
     expect(bootstrap.verification.phoneVerified).toBe(true);
     expect(bootstrap.accountSettings.phoneNumber).toBe("+2348012345678");
 
@@ -472,7 +480,7 @@ describe("AppService", () => {
       // User in OTP verification step
       await service.requestPhoneOtp("+2348055555555");
       
-      const bootstrap = await service.getBootstrap("demo-user");
+      const bootstrap = await service.getBootstrap("+2348055555555");
       expect(bootstrap.onboarding.step).toBe("OtpVerification");
       expect(bootstrap.onboarding.phoneNumber).toBe("+2348055555555");
       expect(bootstrap.onboarding.completed).toBe(false);
@@ -573,7 +581,7 @@ describe("AppService", () => {
       );
 
       // Simulate restart by creating new service instance
-      const newService = new AppService(databaseService, authService, otpService, smsService, mediaService, paystackService, reminderService, pushService, analyticsService);
+      const newService = new AppService(databaseService, authService, otpService, smsService, firebaseAuthService, mediaService, paystackService, reminderService, pushService, analyticsService);
       const restartedBootstrap = await newService.getBootstrap("booking-user-4");
 
       const booking = restartedBootstrap.bookings.find((b) => b.id === result.bookingId);

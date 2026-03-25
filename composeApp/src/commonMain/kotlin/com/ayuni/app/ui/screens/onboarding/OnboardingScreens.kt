@@ -123,7 +123,7 @@ fun OtpVerificationScreen(
     var code by remember { mutableStateOf("") }
     FormShell(
         title = "Verify your number",
-        subtitle = "Enter the 6-digit code sent to $phoneNumber. For now, the MVP test code is 123456.",
+        subtitle = "Enter the 6-digit code sent to $phoneNumber.",
         onBack = onBack
     ) {
         OutlinedTextField(

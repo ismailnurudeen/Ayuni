@@ -104,6 +104,29 @@ class AyuniApiClient(
         return response
     }
 
+    /** Ask the backend which auth provider to use (firebase or twilio). */
+    suspend fun getAuthProvider(): AuthProviderResponse =
+        httpClient.get("$baseUrl/auth/provider").body<AuthProviderResponse>()
+
+    /** Verify a Firebase Phone Auth ID token with the backend. */
+    suspend fun verifyFirebaseToken(idToken: String, deviceInfo: String? = null): FirebaseVerifyResponse {
+        val response = httpClient.post("$baseUrl/auth/firebase/verify") {
+            contentType(ContentType.Application.Json)
+            setBody(FirebaseVerifyRequest(idToken = idToken, deviceInfo = deviceInfo))
+        }.body<FirebaseVerifyResponse>()
+
+        if (response.verified && response.accessToken != null && response.refreshToken != null) {
+            tokenStorage.saveTokens(
+                response.accessToken,
+                response.refreshToken,
+                response.accessTokenExpiresAt ?: "",
+                response.refreshTokenExpiresAt ?: ""
+            )
+        }
+
+        return response
+    }
+
     suspend fun logout(): Boolean {
         return try {
             httpClient.post("$baseUrl/auth/logout") {

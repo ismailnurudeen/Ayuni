@@ -5,6 +5,7 @@ import { DatabaseService } from "../database/database.service";
 import { AuthService } from "./auth.service";
 import { OtpService } from "./otp.service";
 import { TwilioSmsService } from "./sms.service";
+import { FirebaseAuthService } from "./firebase-auth.service";
 import { MediaService } from "./media.service";
 import { PaystackService } from "./paystack.service";
 import { ReminderService } from "./reminder.service";
@@ -51,7 +52,7 @@ import {
   DataExportPayload,
   DataExportRequest
 } from "./app.types";
-import { createInitialUserState, demoBookings, demoNotifications, demoReports, suggestionFixtures, venueFixtures } from "./demo-data";
+import { createInitialUserState, suggestionFixtures, venueFixtures } from "./demo-data";
 
 type SqlClient = {
   query<T extends QueryResultRow = QueryResultRow>(text: string, params?: unknown[]): Promise<QueryResult<T>>;
@@ -100,6 +101,7 @@ export class AppService implements OnModuleInit {
     private readonly authService: AuthService,
     private readonly otpService: OtpService,
     private readonly smsService: TwilioSmsService,
+    private readonly firebaseAuthService: FirebaseAuthService,
     private readonly mediaService: MediaService,
     private readonly paystackService: PaystackService,
     private readonly reminderService: ReminderService,
@@ -109,9 +111,6 @@ export class AppService implements OnModuleInit {
 
   async onModuleInit() {
     await this.seedCatalogData();
-    if (this.shouldSeedDemoFixtures()) {
-      await this.ensureUser("demo-user", true);
-    }
   }
 
   health() {
@@ -129,7 +128,8 @@ export class AppService implements OnModuleInit {
   }
 
   async requestPhoneOtp(phoneNumber: string) {
-    const userId = this.resolveUserId();
+    const normalizedPhone = this.otpService.normalizeNigerianPhone(phoneNumber);
+    const userId = normalizedPhone;
     await this.ensureUser(userId);
 
     const result = await this.database.withTransaction(async (client) => {
@@ -181,7 +181,8 @@ export class AppService implements OnModuleInit {
   }
 
   async verifyPhoneOtp(phoneNumber: string, code: string, deviceInfo?: string) {
-    const userId = this.resolveUserId();
+    const normalizedPhone = this.otpService.normalizeNigerianPhone(phoneNumber);
+    const userId = normalizedPhone;
     await this.ensureUser(userId);
 
     const result = await this.database.withTransaction(async (client) => {
@@ -229,6 +230,68 @@ export class AppService implements OnModuleInit {
       ...result.tokens,
       bootstrap: await this.getBootstrap(userId)
     };
+  }
+
+  /**
+   * Verify phone number via Firebase Phone Auth.
+   * The mobile app handles OTP send/verify via Firebase SDK,
+   * then sends the resulting Firebase ID token here.
+   */
+  async verifyFirebasePhone(firebaseIdToken: string, deviceInfo?: string) {
+
+    const firebaseResult = await this.firebaseAuthService.verifyIdToken(firebaseIdToken);
+    if (!firebaseResult) {
+      return {
+        verified: false,
+        error: "invalid_token",
+      };
+    }
+
+    const normalizedPhone = this.otpService.normalizeNigerianPhone(firebaseResult.phoneNumber);
+
+    if (!this.otpService.validateNigerianPhone(normalizedPhone)) {
+      return {
+        verified: false,
+        error: "invalid_phone",
+      };
+    }
+
+    const userId = normalizedPhone;
+    await this.ensureUser(userId);
+
+    const result = await this.database.withTransaction(async (client) => {
+      const state = await this.loadState(userId, client);
+
+      state.verification.phoneVerified = true;
+      state.accountSettings = {
+        ...state.accountSettings,
+        phoneNumber: normalizedPhone
+      };
+      state.onboarding = {
+        ...state.onboarding,
+        step: "BasicProfile",
+        phoneNumber: normalizedPhone
+      };
+      state.pendingPhoneNumber = "";
+      await client.query("UPDATE users SET phone_number = $2, updated_at = NOW() WHERE id = $1", [userId, normalizedPhone]);
+      await this.saveState(userId, state, client);
+
+      const tokens = await this.authService.createSession(userId, deviceInfo, client);
+      return { success: true, tokens };
+    });
+
+    return {
+      verified: true,
+      ...result.tokens,
+      bootstrap: await this.getBootstrap(userId)
+    };
+  }
+
+  /**
+   * Returns the active auth provider based on AUTH_PROVIDER env var.
+   */
+  getAuthProvider(): "firebase" | "twilio" {
+    return process.env.AUTH_PROVIDER === "firebase" ? "firebase" : "twilio";
   }
 
   async completeBasicOnboarding(body: BasicOnboardingPayload, rawUserId?: string) {
@@ -2913,11 +2976,9 @@ export class AppService implements OnModuleInit {
   }
 
   private resolveUserId(rawUserId?: string) {
-    return rawUserId?.trim() || "demo-user";
-  }
-
-  private shouldSeedDemoFixtures() {
-    return process.env.AYUNI_ENABLE_DEMO_FIXTURES === "true" || process.env.NODE_ENV !== "production";
+    const uid = rawUserId?.trim();
+    if (!uid) throw new Error("User ID is required");
+    return uid;
   }
 
   private async seedCatalogData() {
@@ -2950,9 +3011,8 @@ export class AppService implements OnModuleInit {
     }
   }
 
-  private async ensureUser(userId: string, useDemoFixtures = false) {
+  private async ensureUser(userId: string) {
     await this.seedCatalogData();
-    const resolvedUseDemoFixtures = useDemoFixtures || (userId === "demo-user" && this.shouldSeedDemoFixtures());
 
     await this.database.withTransaction(async (client) => {
       const existingUser = await client.query<{ id: string }>("SELECT id FROM users WHERE id = $1", [userId]);
@@ -2962,32 +3022,9 @@ export class AppService implements OnModuleInit {
         return;
       }
 
-      const state = createInitialUserState(resolvedUseDemoFixtures);
+      const state = createInitialUserState(false);
       await client.query("INSERT INTO users (id, phone_number) VALUES ($1, $2)", [userId, state.accountSettings.phoneNumber]);
       await this.insertState(userId, state, client);
-
-      if (resolvedUseDemoFixtures) {
-        for (const booking of demoBookings) {
-          await client.query("INSERT INTO bookings (id, user_id, payload, created_at, updated_at) VALUES ($1, $2, $3, NOW(), NOW())", [
-            booking.id,
-            userId,
-            booking
-          ]);
-        }
-        for (const notification of demoNotifications) {
-          await client.query("INSERT INTO notifications (id, user_id, payload, created_at) VALUES ($1, $2, $3, NOW())", [
-            notification.id,
-            userId,
-            notification
-          ]);
-        }
-        for (const report of demoReports) {
-          await client.query(
-            "INSERT INTO safety_reports (id, user_id, status, payload, created_at, updated_at) VALUES ($1, $2, $3, $4, NOW(), NOW())",
-            [report.id, userId, report.status, report]
-          );
-        }
-      }
 
       await this.ensureActiveRound(userId, state, client);
     });
