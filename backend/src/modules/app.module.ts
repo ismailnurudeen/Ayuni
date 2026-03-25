@@ -19,6 +19,7 @@ import { WhatsAppService } from "./whatsapp.service";
 import { ReminderService } from "./reminder.service";
 import { MediaService } from "./media.service";
 import { PaystackService } from "./paystack.service";
+import { PushService } from "./push.service";
 import { DatabaseService } from "../database/database.service";
 
 @Module({
@@ -35,6 +36,6 @@ import { DatabaseService } from "../database/database.service";
     WebhookController,
     ReminderController
   ],
-  providers: [DatabaseService, AppService, AuthService, AuthGuard, OtpService, TwilioSmsService, WhatsAppService, ReminderService, MediaService, PaystackService]
+  providers: [DatabaseService, AppService, AuthService, AuthGuard, OtpService, TwilioSmsService, WhatsAppService, ReminderService, MediaService, PaystackService, PushService]
 })  
 export class AppModule {}

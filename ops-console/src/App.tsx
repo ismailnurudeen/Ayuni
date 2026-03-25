@@ -92,6 +92,7 @@ type OpsDashboard = {
     pendingGovIdReviews: number;
     activeFreezes: number;
     pendingSupportRequests: number;
+    totalDeviceTokens: number;
   };
   featureToggles: {
     requireGovIdForBooking: boolean;
@@ -188,6 +189,12 @@ export function App() {
   // Delivery log state
   const [deliveryLogs, setDeliveryLogs] = useState<ReminderLog[]>([]);
   const [deliveryLogFilter, setDeliveryLogFilter] = useState<string>("");
+
+  // Notification send state
+  const [notifUserId, setNotifUserId] = useState("");
+  const [notifTitle, setNotifTitle] = useState("");
+  const [notifBody, setNotifBody] = useState("");
+  const [notifType, setNotifType] = useState("general");
 
   const fetchDashboard = async () => {
     try {
@@ -628,7 +635,7 @@ export function App() {
           Designed for real-date operations: trust reviews, freeze decisions, venue readiness, and booking escalations.
         </p>
         <div style={{ marginTop: "1rem", fontSize: "0.9rem", opacity: 0.8 }}>
-          <strong>Overview:</strong> {overview.pendingReports} pending reports • {overview.pendingSelfieReviews || 0} pending selfies • {overview.pendingGovIdReviews || 0} pending IDs • {overview.pendingSupportRequests || 0} support requests • {overview.activeVenueCount} active
+          <strong>Overview:</strong> {overview.pendingReports} pending reports • {overview.pendingSelfieReviews || 0} pending selfies • {overview.pendingGovIdReviews || 0} pending IDs • {overview.pendingSupportRequests || 0} support requests • {overview.totalDeviceTokens || 0} device tokens • {overview.activeVenueCount} active
           venues • {overview.totalAcceptedThisRound} accepted / {overview.totalDeclinedThisRound} declined this round
         </div>
       </section>
@@ -1308,6 +1315,43 @@ export function App() {
               </div>
             ))
           )}
+        </article>
+
+        <article className="panel">
+          <h2>Send Notification</h2>
+          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+            <input placeholder="User ID" value={notifUserId} onChange={e => setNotifUserId(e.target.value)} />
+            <input placeholder="Title" value={notifTitle} onChange={e => setNotifTitle(e.target.value)} />
+            <textarea placeholder="Body" value={notifBody} onChange={e => setNotifBody(e.target.value)} rows={3} />
+            <select value={notifType} onChange={e => setNotifType(e.target.value)}>
+              <option value="general">General</option>
+              <option value="new_round">New Round</option>
+              <option value="booking_update">Booking Update</option>
+              <option value="payment_required">Payment Required</option>
+              <option value="reminder">Reminder</option>
+              <option value="verification_update">Verification Update</option>
+              <option value="safety_alert">Safety Alert</option>
+            </select>
+            <button disabled={actionLoading === "send-notif" || !notifUserId || !notifTitle || !notifBody} onClick={async () => {
+              setActionLoading("send-notif");
+              try {
+                const res = await fetch(`${API_BASE}/ops/notifications/send`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json", "x-user-id": "ops-user" },
+                  body: JSON.stringify({ userId: notifUserId, title: notifTitle, body: notifBody, type: notifType })
+                });
+                if (!res.ok) throw new Error("Failed to send notification");
+                setNotifUserId(""); setNotifTitle(""); setNotifBody(""); setNotifType("general");
+                alert("Notification sent!");
+              } catch (err) {
+                alert(err instanceof Error ? err.message : "Error sending notification");
+              } finally {
+                setActionLoading(null);
+              }
+            }}>
+              {actionLoading === "send-notif" ? "Sending..." : "Send Notification"}
+            </button>
+          </div>
         </article>
 
         <article className="panel">

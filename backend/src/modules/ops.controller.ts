@@ -162,4 +162,34 @@ export class OpsController {
   disableFeature(@Param("name") name: string, @Headers("x-user-id") opsUserId?: string) {
     return this.appService.setFeatureToggle(name, false, opsUserId);
   }
+
+  // ── Push Notifications (P1-06) ────────────────────────────────────
+
+  @Post("notifications/send")
+  sendNotification(
+    @Body() body: {
+      userId: string;
+      title: string;
+      body: string;
+      type?: "new_round" | "booking_update" | "payment_required" | "reminder" | "verification_update" | "safety_alert" | "general";
+      deepLinkTarget?: string;
+      deepLinkId?: string;
+    }
+  ) {
+    return this.appService.opsSendNotification(
+      body.userId,
+      body.title,
+      body.body,
+      body.type || "general",
+      body.deepLinkTarget,
+      body.deepLinkId
+    );
+  }
+
+  // ── P1-11: Account Deletion Admin ─────────────────────────────────
+
+  @Post("account-deletions/process")
+  processScheduledDeletions() {
+    return this.appService.processScheduledDeletions();
+  }
 }

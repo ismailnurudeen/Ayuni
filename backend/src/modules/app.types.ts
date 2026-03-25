@@ -7,6 +7,8 @@ export type CheckInStatus = "Pending" | "Confirmed" | "SupportFlagged";
 export type BookingStatus = "intent" | "availability_submitted" | "payment_pending" | "confirmed" | "completed" | "cancelled";
 export type ShareChannel = "WhatsApp" | "SMS";
 export type NotificationCategory = "Update" | "Booking" | "Cancellation";
+export type NotificationType = "new_round" | "booking_update" | "payment_required" | "reminder" | "verification_update" | "safety_alert" | "general";
+export type DevicePlatform = "android" | "ios";
 export type RoundReaction = "Accepted" | "Declined";
 export type PaymentMethod = "card" | "bank_transfer" | "ussd";
 export type PaymentStatus = "initiated" | "pending" | "completed" | "failed" | "refunded";
@@ -204,6 +206,37 @@ export type InboxNotification = {
   body: string;
   timestampLabel: string;
   category: NotificationCategory;
+  notificationType?: NotificationType;
+  readAt?: string;
+  deepLinkTarget?: string;
+  deepLinkId?: string;
+};
+
+export type DeviceToken = {
+  id: string;
+  userId: string;
+  platform: DevicePlatform;
+  token: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type NotificationPreferences = {
+  userId: string;
+  newRound: boolean;
+  bookingUpdate: boolean;
+  paymentRequired: boolean;
+  reminder: boolean;
+  verificationUpdate: boolean;
+  safetyAlert: boolean;
+  pushEnabled: boolean;
+  inboxEnabled: boolean;
+};
+
+export type PushPayload = {
+  title: string;
+  body: string;
+  data?: Record<string, string>;
 };
 
 export type SafetyReport = {
@@ -367,6 +400,7 @@ export type OpsDashboard = {
     pendingGovIdReviews: number;
     activeFreezes: number;
     pendingSupportRequests: number;
+    totalDeviceTokens: number;
   };
   featureToggles: {
     requireGovIdForBooking: boolean;
@@ -479,5 +513,54 @@ export type BasicOnboardingPayload = {
   interestedIn: string;
   city: City;
   acceptedTerms: boolean;
+};
+
+// ── P1-11: Account Deletion & Privacy ───────────────────────────────
+
+export type DeletionStatus = "pending" | "cancelled" | "completed";
+
+export type AccountDeletionRequest = {
+  deletionRequestedAt: string;
+  deletionScheduledAt: string;
+  status: DeletionStatus;
+  gracePeriodDays: number;
+};
+
+export type DataExportRequest = {
+  id: string;
+  userId: string;
+  status: "pending" | "completed" | "failed";
+  createdAt: string;
+  completedAt?: string;
+};
+
+export type DataExportPayload = {
+  exportedAt: string;
+  profile: EditableProfile;
+  accountSettings: AccountSettings;
+  datingPreferences: DatingPreferences;
+  verification: {
+    phoneVerified: boolean;
+    selfieVerified: boolean;
+    governmentIdVerified: boolean;
+  };
+  bookingHistory: Array<{
+    id: string;
+    status: BookingStatus;
+    venueName: string;
+    city: City;
+    startAt: string;
+    createdAt: string;
+  }>;
+  notificationHistory: Array<{
+    title: string;
+    body: string;
+    category: NotificationCategory;
+  }>;
+  termsAcceptances: Array<{
+    termsVersion: string;
+    privacyVersion: string;
+    acceptedAt: string;
+  }>;
 };
 

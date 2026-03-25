@@ -8,6 +8,7 @@ import { MediaService } from "./media.service";
 import { PaystackService } from "./paystack.service";
 import { ReminderService } from "./reminder.service";
 import { WhatsAppService } from "./whatsapp.service";
+import { PushService } from "./push.service";
 import { AppService } from "./app.service";
 import { SafetyReport } from "./app.types";
 
@@ -21,6 +22,7 @@ describe("AppService", () => {
   let paystackService: PaystackService;
   let whatsappService: WhatsAppService;
   let reminderService: ReminderService;
+  let pushService: PushService;
   let service: AppService;
 
   beforeEach(async () => {
@@ -38,7 +40,8 @@ describe("AppService", () => {
     paystackService = new PaystackService();
     whatsappService = new WhatsAppService();
     reminderService = new ReminderService(databaseService, whatsappService, smsService);
-    service = new AppService(databaseService, authService, otpService, smsService, mediaService, paystackService, reminderService);
+    pushService = new PushService(databaseService);
+    service = new AppService(databaseService, authService, otpService, smsService, mediaService, paystackService, reminderService, pushService);
     await service.onModuleInit();
   });
 
@@ -89,7 +92,8 @@ describe("AppService", () => {
     const restartedPaystackService = new PaystackService();
     const restartedWhatsAppService = new WhatsAppService();
     const restartedReminderService = new ReminderService(restartedDatabaseService, restartedWhatsAppService, restartedSmsService);
-    const restartedService = new AppService(restartedDatabaseService, restartedAuthService, restartedOtpService, restartedSmsService, restartedMediaService, restartedPaystackService, restartedReminderService);
+    const restartedPushService = new PushService(restartedDatabaseService);
+    const restartedService = new AppService(restartedDatabaseService, restartedAuthService, restartedOtpService, restartedSmsService, restartedMediaService, restartedPaystackService, restartedReminderService, restartedPushService);
     await restartedService.onModuleInit();
 
     const bootstrap = await restartedService.getBootstrap("demo-user");
@@ -565,7 +569,7 @@ describe("AppService", () => {
       );
 
       // Simulate restart by creating new service instance
-      const newService = new AppService(databaseService, authService, otpService, smsService, mediaService, paystackService, reminderService);
+      const newService = new AppService(databaseService, authService, otpService, smsService, mediaService, paystackService, reminderService, pushService);
       const restartedBootstrap = await newService.getBootstrap("booking-user-4");
 
       const booking = restartedBootstrap.bookings.find((b) => b.id === result.bookingId);
@@ -1665,6 +1669,292 @@ describe("AppService", () => {
       expect(dashboard.supportQueue).toBeDefined();
       expect(dashboard.supportQueue.length).toBeGreaterThanOrEqual(1);
       expect(dashboard.overview.pendingSupportRequests).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  // ── P1-11: Account Deletion & Privacy ─────────────────────────────
+
+  describe("Account Deletion", () => {
+    it("requests account deletion and sets pending status", async () => {
+      const userId = "deletion-test-user";
+      await service.getBootstrap(userId);
+
+      const result = await service.requestAccountDeletion(userId);
+      expect(result.status).toBe("pending");
+      expect(result.gracePeriodDays).toBe(30);
+      expect(result.deletionRequestedAt).toBeDefined();
+      expect(result.deletionScheduledAt).toBeDefined();
+
+      const status = await service.getAccountDeletionStatus(userId);
+      expect(status.status).toBe("pending");
+      expect(status.scheduledAt).toBeDefined();
+    });
+
+    it("rejects duplicate deletion request", async () => {
+      const userId = "dup-deletion-user";
+      await service.getBootstrap(userId);
+      await service.requestAccountDeletion(userId);
+
+      await expect(service.requestAccountDeletion(userId)).rejects.toThrow("Account deletion already requested");
+    });
+
+    it("cancels pending deletion within grace period", async () => {
+      const userId = "cancel-deletion-user";
+      await service.getBootstrap(userId);
+      await service.requestAccountDeletion(userId);
+
+      const result = await service.cancelAccountDeletion(userId);
+      expect(result.cancelled).toBe(true);
+
+      const status = await service.getAccountDeletionStatus(userId);
+      expect(status.status).toBe("cancelled");
+    });
+
+    it("rejects cancellation with no pending deletion", async () => {
+      const userId = "no-deletion-user";
+      await service.getBootstrap(userId);
+
+      await expect(service.cancelAccountDeletion(userId)).rejects.toThrow("No pending deletion to cancel");
+    });
+
+    it("revokes all sessions on deletion request", async () => {
+      const userId = "session-revoke-user";
+      await service.getBootstrap(userId);
+      const tokens = await authService.createSession(userId);
+      expect(tokens.accessToken).toBeDefined();
+
+      await service.requestAccountDeletion(userId);
+
+      const valid = await authService.validateAccessToken(tokens.accessToken);
+      expect(valid).toBeNull();
+    });
+
+    it("cancels active bookings on deletion request", async () => {
+      const userId = "booking-cancel-user";
+      const bootstrap = await service.getBootstrap(userId);
+      const matchId = bootstrap.suggestions[0].id;
+      await service.submitAvailability(matchId, ["Saturday evening"], userId);
+      const bookingResult = await service.createBooking(matchId, userId);
+
+      await service.requestAccountDeletion(userId);
+
+      const updated = await service.getBootstrap(userId);
+      const booking = updated.bookings.find(b => b.id === bookingResult.booking.id);
+      expect(booking!.status).toBe("cancelled");
+      expect(booking!.cancellationReason).toBe("Account deletion requested");
+    });
+
+    it("processes hard-delete for expired grace period", async () => {
+      const userId = "hard-delete-user";
+      await service.getBootstrap(userId);
+      await service.requestAccountDeletion(userId);
+
+      // Manually set scheduled date to the past
+      await pool.query(
+        "UPDATE users SET deletion_scheduled_at = $2 WHERE id = $1",
+        [userId, new Date(Date.now() - 1000)]
+      );
+
+      const result = await service.processScheduledDeletions();
+      expect(result.processed).toBeGreaterThanOrEqual(1);
+
+      // User should be marked as completed
+      const userResult = await pool.query("SELECT deletion_status FROM users WHERE id = $1", [userId]);
+      expect(userResult.rows[0].deletion_status).toBe("completed");
+    });
+
+    it("hard-delete retains anonymized booking records", async () => {
+      const userId = "anon-booking-user";
+      const bootstrap = await service.getBootstrap(userId);
+      const matchId = bootstrap.suggestions[0].id;
+      await service.submitAvailability(matchId, ["Saturday evening"], userId);
+      await service.createBooking(matchId, userId);
+
+      await service.requestAccountDeletion(userId);
+      await pool.query(
+        "UPDATE users SET deletion_scheduled_at = $2 WHERE id = $1",
+        [userId, new Date(Date.now() - 1000)]
+      );
+      await service.processScheduledDeletions();
+
+      // Bookings should still exist with anonymized content
+      const bookings = await pool.query<{ payload: any }>("SELECT payload FROM bookings WHERE user_id = $1", [userId]);
+      expect(bookings.rows.length).toBeGreaterThanOrEqual(1);
+      expect(bookings.rows[0].payload.counterpartName).toBe("[deleted]");
+
+      // Personal data should be gone
+      const states = await pool.query("SELECT * FROM user_states WHERE user_id = $1", [userId]);
+      expect(states.rows.length).toBe(0);
+    });
+  });
+
+  describe("Data Export", () => {
+    it("exports user data as JSON", async () => {
+      const userId = "export-test-user";
+      await service.getBootstrap(userId);
+
+      const exported = await service.requestDataExport(userId);
+      expect(exported.exportedAt).toBeDefined();
+      expect(exported.profile).toBeDefined();
+      expect(exported.accountSettings).toBeDefined();
+      expect(exported.datingPreferences).toBeDefined();
+      expect(exported.verification).toBeDefined();
+      expect(exported.bookingHistory).toBeDefined();
+      expect(exported.notificationHistory).toBeDefined();
+    });
+
+    it("rate-limits exports to 1 per 24 hours", async () => {
+      const userId = "rate-limit-user";
+      await service.getBootstrap(userId);
+
+      await service.requestDataExport(userId);
+      await expect(service.requestDataExport(userId)).rejects.toThrow("Data export already requested in the last 24 hours");
+    });
+  });
+
+  describe("Privacy Consent", () => {
+    it("accepts privacy consent with version tracking", async () => {
+      const userId = "consent-test-user";
+      await service.getBootstrap(userId);
+
+      const result = await service.acceptPrivacyConsent("2.0", "2.0", userId);
+      expect(result.accepted).toBe(true);
+
+      const status = await service.getConsentStatus(userId);
+      expect(status.latestTermsVersion).toBe("2.0");
+      expect(status.latestPrivacyVersion).toBe("2.0");
+      expect(status.acceptedAt).toBeDefined();
+    });
+
+    it("returns null consent for users who have not accepted", async () => {
+      const status = await service.getConsentStatus("no-consent-user");
+      expect(status.latestTermsVersion).toBeNull();
+      expect(status.latestPrivacyVersion).toBeNull();
+    });
+  });
+
+  describe("Push notifications and inbox (P1-06)", () => {
+    it("registers and retrieves device tokens", async () => {
+      const userId = "push-user-1";
+      await service.registerDeviceToken(userId, "android", "fcm-token-abc123");
+      const tokens = await service.getUserDeviceTokens(userId);
+      expect(tokens.length).toBe(1);
+      expect(tokens[0].platform).toBe("android");
+      expect(tokens[0].token).toBe("fcm-token-abc123");
+    });
+
+    it("upserts duplicate device token", async () => {
+      const userId = "push-user-2";
+      await service.registerDeviceToken(userId, "android", "fcm-token-dup");
+      await service.registerDeviceToken(userId, "ios", "fcm-token-dup");
+      const tokens = await service.getUserDeviceTokens(userId);
+      expect(tokens.length).toBe(1);
+      expect(tokens[0].platform).toBe("ios");
+    });
+
+    it("removes a device token", async () => {
+      const userId = "push-user-3";
+      await service.registerDeviceToken(userId, "android", "fcm-token-remove");
+      await service.removeDeviceToken(userId, "fcm-token-remove");
+      const tokens = await service.getUserDeviceTokens(userId);
+      expect(tokens.length).toBe(0);
+    });
+
+    it("returns empty inbox for new user", async () => {
+      const userId = "inbox-user-1";
+      const inbox = await service.getInbox(userId);
+      expect(inbox.notifications.length).toBe(0);
+      expect(inbox.unreadCount).toBe(0);
+      expect(inbox.total).toBe(0);
+    });
+
+    it("dispatches notification and appears in inbox", async () => {
+      const userId = "inbox-user-2";
+      await service.getBootstrap(userId);
+      await service.dispatchNotification(userId, "general", "Test Title", "Test body text", "Update");
+      const inbox = await service.getInbox(userId);
+      expect(inbox.notifications.length).toBe(1);
+      expect(inbox.notifications[0].title).toBe("Test Title");
+      expect(inbox.notifications[0].body).toBe("Test body text");
+      expect(inbox.unreadCount).toBe(1);
+    });
+
+    it("marks a notification as read", async () => {
+      const userId = "inbox-user-3";
+      await service.getBootstrap(userId);
+      await service.dispatchNotification(userId, "general", "Read Test", "Body", "Update");
+      const inbox = await service.getInbox(userId);
+      const notifId = inbox.notifications[0].id;
+
+      await service.markNotificationRead(userId, notifId);
+      const updated = await service.getInbox(userId);
+      expect(updated.unreadCount).toBe(0);
+      expect(updated.notifications[0].readAt).toBeDefined();
+    });
+
+    it("marks all notifications as read", async () => {
+      const userId = "inbox-user-4";
+      await service.getBootstrap(userId);
+      await service.dispatchNotification(userId, "general", "N1", "B1", "Update");
+      await service.dispatchNotification(userId, "general", "N2", "B2", "Update");
+      await service.dispatchNotification(userId, "general", "N3", "B3", "Update");
+
+      const result = await service.markAllNotificationsRead(userId);
+      expect(result.count).toBe(3);
+
+      const inbox = await service.getInbox(userId);
+      expect(inbox.unreadCount).toBe(0);
+    });
+
+    it("returns correct unread badge count", async () => {
+      const userId = "badge-user-1";
+      await service.getBootstrap(userId);
+      await service.dispatchNotification(userId, "general", "N1", "B1", "Update");
+      await service.dispatchNotification(userId, "general", "N2", "B2", "Update");
+
+      const count = await service.getUnreadBadgeCount(userId);
+      expect(count).toBe(2);
+    });
+
+    it("returns default notification preferences", async () => {
+      const userId = "pref-user-1";
+      const prefs = await service.getNotificationPreferences(userId);
+      expect(prefs.pushEnabled).toBe(true);
+      expect(prefs.inboxEnabled).toBe(true);
+      expect(prefs.newRound).toBe(true);
+      expect(prefs.safetyAlert).toBe(true);
+    });
+
+    it("updates notification preferences", async () => {
+      const userId = "pref-user-2";
+      await service.updateNotificationPreferences(userId, { pushEnabled: false, newRound: false });
+      const prefs = await service.getNotificationPreferences(userId);
+      expect(prefs.pushEnabled).toBe(false);
+      expect(prefs.newRound).toBe(false);
+      expect(prefs.bookingUpdate).toBe(true);
+    });
+
+    it("respects disabled notification type in dispatch", async () => {
+      const userId = "pref-user-3";
+      await service.getBootstrap(userId);
+      await service.updateNotificationPreferences(userId, { newRound: false });
+      await service.dispatchNotification(userId, "new_round", "Round!", "New round available", "Update");
+      const inbox = await service.getInbox(userId);
+      expect(inbox.notifications.length).toBe(0);
+    });
+
+    it("ops can send notification to a user", async () => {
+      const userId = "ops-notif-user";
+      await service.opsSendNotification(userId, "Ops Message", "Important update from ops", "general");
+      const inbox = await service.getInbox(userId);
+      expect(inbox.notifications.length).toBe(1);
+      expect(inbox.notifications[0].title).toBe("Ops Message");
+    });
+
+    it("totalDeviceTokens appears in ops dashboard", async () => {
+      await service.registerDeviceToken("dt-dash-user", "android", "tok-dash-1");
+      const dashboard = await service.getOpsDashboard("ops-user");
+      expect(dashboard.overview.totalDeviceTokens).toBeGreaterThanOrEqual(1);
     });
   });
 });

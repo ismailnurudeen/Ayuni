@@ -8,6 +8,7 @@ import { TwilioSmsService } from "./sms.service";
 import { MediaService } from "./media.service";
 import { PaystackService } from "./paystack.service";
 import { ReminderService } from "./reminder.service";
+import { PushService } from "./push.service";
 import {
   AccountSettings,
   AppPreferences,
@@ -19,10 +20,13 @@ import {
   CreateVenuePayload,
   DateBooking,
   DatingPreferences,
+  DeviceToken,
   EditableProfile,
   InboxNotification,
   MatchroundState,
   NotificationCategory,
+  NotificationPreferences,
+  NotificationType,
   OpsDashboard,
   OperatingHours,
   PaymentMethod,
@@ -41,7 +45,10 @@ import {
   VenuePartner,
   VenueStatus,
   VenueTimeSlot,
-  VerificationStatus
+  VerificationStatus,
+  AccountDeletionRequest,
+  DataExportPayload,
+  DataExportRequest
 } from "./app.types";
 import { createInitialUserState, demoBookings, demoNotifications, demoReports, suggestionFixtures, venueFixtures } from "./demo-data";
 
@@ -94,7 +101,8 @@ export class AppService implements OnModuleInit {
     private readonly smsService: TwilioSmsService,
     private readonly mediaService: MediaService,
     private readonly paystackService: PaystackService,
-    private readonly reminderService: ReminderService
+    private readonly reminderService: ReminderService,
+    private readonly pushService: PushService
   ) {}
 
   async onModuleInit() {
@@ -1077,12 +1085,13 @@ export class AppService implements OnModuleInit {
     const reports = reportRows.rows.map((row: { payload: SafetyReport }) => row.payload);
     
     // Load other aggregate data for this user
-    const [bookings, suggestions, reactions, venues, supportQueue] = await Promise.all([
+    const [bookings, suggestions, reactions, venues, supportQueue, deviceTokenCount] = await Promise.all([
       this.loadBookings(userId),
       this.loadRoundSuggestions(userId),
       this.loadReactions(userId),
       this.loadAllVenues(),
-      this.getSupportQueue(userId)
+      this.getSupportQueue(userId),
+      this.database.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM device_tokens")
     ]);
 
     // Fetch pending selfie submissions
@@ -1176,7 +1185,8 @@ export class AppService implements OnModuleInit {
         pendingSelfieReviews: selfieQueue.length,
         pendingGovIdReviews: govIdQueue.length,
         activeFreezes: state.safety.activeFreeze ? 1 : 0,
-        pendingSupportRequests: supportQueue.length
+        pendingSupportRequests: supportQueue.length,
+        totalDeviceTokens: parseInt(deviceTokenCount.rows[0]?.count || "0", 10)
       },
       featureToggles: {
         requireGovIdForBooking: requireGovIdToggle?.enabled || false
@@ -1745,6 +1755,226 @@ export class AppService implements OnModuleInit {
     return this.getOpsDashboard(opsUserId);
   }
 
+  // ── Push Notifications & Inbox (P1-06) ───────────────────────────
+
+  async registerDeviceToken(userId: string, platform: "android" | "ios", token: string) {
+    // Upsert: if same token exists for this user, just update timestamp
+    const existing = await this.database.query<{ id: string }>(
+      "SELECT id FROM device_tokens WHERE user_id = $1 AND token = $2",
+      [userId, token]
+    );
+
+    if (existing.rows.length > 0) {
+      await this.database.query(
+        "UPDATE device_tokens SET platform = $1, updated_at = NOW() WHERE id = $2",
+        [platform, existing.rows[0].id]
+      );
+      return { id: existing.rows[0].id, registered: true };
+    }
+
+    const id = `dt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    await this.database.query(
+      "INSERT INTO device_tokens (id, user_id, platform, token, created_at, updated_at) VALUES ($1, $2, $3, $4, NOW(), NOW())",
+      [id, userId, platform, token]
+    );
+
+    return { id, registered: true };
+  }
+
+  async removeDeviceToken(userId: string, token: string) {
+    await this.database.query(
+      "DELETE FROM device_tokens WHERE user_id = $1 AND token = $2",
+      [userId, token]
+    );
+    return { removed: true };
+  }
+
+  async getUserDeviceTokens(userId: string): Promise<DeviceToken[]> {
+    const result = await this.database.query<{
+      id: string; user_id: string; platform: string; token: string; created_at: string; updated_at: string;
+    }>(
+      "SELECT id, user_id, platform, token, created_at, updated_at FROM device_tokens WHERE user_id = $1 ORDER BY updated_at DESC",
+      [userId]
+    );
+    return result.rows.map(r => ({
+      id: r.id,
+      userId: r.user_id,
+      platform: r.platform as "android" | "ios",
+      token: r.token,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at
+    }));
+  }
+
+  async getInbox(userId: string) {
+    const result = await this.database.query<{
+      id: string; payload: InboxNotification; read_at: string | null; deep_link_target: string | null; deep_link_id: string | null; notification_type: string | null; created_at: string;
+    }>(
+      "SELECT id, payload, read_at, deep_link_target, deep_link_id, notification_type, created_at FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100",
+      [userId]
+    );
+
+    const notifications = result.rows.map(r => ({
+      ...r.payload,
+      readAt: r.read_at || undefined,
+      deepLinkTarget: r.deep_link_target || r.payload.deepLinkTarget || undefined,
+      deepLinkId: r.deep_link_id || r.payload.deepLinkId || undefined,
+      notificationType: (r.notification_type || r.payload.notificationType || "general") as NotificationType
+    }));
+
+    const unreadCount = result.rows.filter(r => !r.read_at).length;
+
+    return {
+      notifications,
+      unreadCount,
+      total: result.rows.length
+    };
+  }
+
+  async markNotificationRead(userId: string, notificationId: string) {
+    await this.database.query(
+      "UPDATE notifications SET read_at = NOW() WHERE id = $1 AND user_id = $2 AND read_at IS NULL",
+      [notificationId, userId]
+    );
+    return { read: true };
+  }
+
+  async markAllNotificationsRead(userId: string) {
+    const result = await this.database.query(
+      "UPDATE notifications SET read_at = NOW() WHERE user_id = $1 AND read_at IS NULL",
+      [userId]
+    );
+    return { read: true, count: result.rowCount || 0 };
+  }
+
+  async getNotificationPreferences(userId: string): Promise<NotificationPreferences> {
+    const result = await this.database.query<{
+      user_id: string; new_round: boolean; booking_update: boolean; payment_required: boolean;
+      reminder: boolean; verification_update: boolean; safety_alert: boolean;
+      push_enabled: boolean; inbox_enabled: boolean;
+    }>(
+      "SELECT * FROM notification_preferences WHERE user_id = $1",
+      [userId]
+    );
+
+    if (result.rows.length === 0) {
+      // Return defaults (all enabled)
+      return {
+        userId,
+        newRound: true,
+        bookingUpdate: true,
+        paymentRequired: true,
+        reminder: true,
+        verificationUpdate: true,
+        safetyAlert: true,
+        pushEnabled: true,
+        inboxEnabled: true
+      };
+    }
+
+    const r = result.rows[0];
+    return {
+      userId: r.user_id,
+      newRound: r.new_round,
+      bookingUpdate: r.booking_update,
+      paymentRequired: r.payment_required,
+      reminder: r.reminder,
+      verificationUpdate: r.verification_update,
+      safetyAlert: r.safety_alert,
+      pushEnabled: r.push_enabled,
+      inboxEnabled: r.inbox_enabled
+    };
+  }
+
+  async updateNotificationPreferences(userId: string, prefs: Partial<NotificationPreferences>) {
+    const current = await this.getNotificationPreferences(userId);
+    const merged = { ...current, ...prefs, userId };
+
+    await this.database.query(
+      `INSERT INTO notification_preferences (user_id, new_round, booking_update, payment_required, reminder, verification_update, safety_alert, push_enabled, inbox_enabled, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+       ON CONFLICT (user_id) DO UPDATE SET
+         new_round = $2, booking_update = $3, payment_required = $4, reminder = $5,
+         verification_update = $6, safety_alert = $7, push_enabled = $8, inbox_enabled = $9, updated_at = NOW()`,
+      [userId, merged.newRound, merged.bookingUpdate, merged.paymentRequired, merged.reminder,
+       merged.verificationUpdate, merged.safetyAlert, merged.pushEnabled, merged.inboxEnabled]
+    );
+
+    return merged;
+  }
+
+  async dispatchNotification(
+    userId: string,
+    type: NotificationType,
+    title: string,
+    body: string,
+    category: NotificationCategory,
+    deepLinkTarget?: string,
+    deepLinkId?: string
+  ) {
+    // Check user preferences
+    const prefs = await this.getNotificationPreferences(userId);
+    const typeEnabled = this.isNotificationTypeEnabled(prefs, type);
+
+    // Always write to inbox (unless inbox disabled)
+    if (prefs.inboxEnabled && typeEnabled) {
+      const state = await this.loadState(userId);
+      const notification: InboxNotification = {
+        id: `note-${state.nextNotificationId++}`,
+        title,
+        body,
+        timestampLabel: "Just now",
+        category,
+        notificationType: type,
+        deepLinkTarget,
+        deepLinkId
+      };
+      await this.database.query(
+        "INSERT INTO notifications (id, user_id, payload, deep_link_target, deep_link_id, notification_type, created_at) VALUES ($1, $2, $3, $4, $5, $6, NOW())",
+        [notification.id, userId, notification, deepLinkTarget || null, deepLinkId || null, type]
+      );
+      await this.saveState(userId, state);
+    }
+
+    // Send push if enabled
+    if (prefs.pushEnabled && typeEnabled) {
+      const data: Record<string, string> = {};
+      if (deepLinkTarget) data.screen = deepLinkTarget;
+      if (deepLinkId) data.id = deepLinkId;
+      data.type = type;
+
+      await this.pushService.sendToUser(userId, { title, body, data });
+    }
+
+    return { dispatched: true, type };
+  }
+
+  private isNotificationTypeEnabled(prefs: NotificationPreferences, type: NotificationType): boolean {
+    switch (type) {
+      case "new_round": return prefs.newRound;
+      case "booking_update": return prefs.bookingUpdate;
+      case "payment_required": return prefs.paymentRequired;
+      case "reminder": return prefs.reminder;
+      case "verification_update": return prefs.verificationUpdate;
+      case "safety_alert": return prefs.safetyAlert;
+      case "general": return true;
+      default: return true;
+    }
+  }
+
+  async opsSendNotification(targetUserId: string, title: string, body: string, type: NotificationType = "general", deepLinkTarget?: string, deepLinkId?: string) {
+    await this.ensureUser(targetUserId);
+    return this.dispatchNotification(targetUserId, type, title, body, "Update", deepLinkTarget, deepLinkId);
+  }
+
+  async getUnreadBadgeCount(userId: string): Promise<number> {
+    const result = await this.database.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM notifications WHERE user_id = $1 AND read_at IS NULL",
+      [userId]
+    );
+    return parseInt(result.rows[0]?.count || "0", 10);
+  }
+
   // ── Booking Support Workflows (P1-05) ────────────────────────────
 
   private async appendAuditLog(
@@ -2298,6 +2528,343 @@ export class AppService implements OnModuleInit {
     }
 
     return true;
+  }
+
+  // ── P1-11: Account Deletion & Privacy ─────────────────────────────
+
+  private readonly DELETION_GRACE_PERIOD_DAYS = 30;
+
+  /**
+   * Request account deletion — soft-deletes the account with a 30-day grace period.
+   * Revokes all sessions immediately.
+   */
+  async requestAccountDeletion(rawUserId?: string): Promise<AccountDeletionRequest> {
+    const userId = this.resolveUserId(rawUserId);
+    await this.ensureUser(userId);
+
+    return this.database.withTransaction(async (client) => {
+      // Check if already pending
+      const existing = await client.query<{ deletion_status: string }>(
+        "SELECT deletion_status FROM users WHERE id = $1",
+        [userId]
+      );
+      if (existing.rows[0]?.deletion_status === "pending") {
+        throw new Error("Account deletion already requested");
+      }
+
+      const now = new Date();
+      const scheduledAt = new Date(now.getTime() + this.DELETION_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000);
+
+      await client.query(
+        `UPDATE users 
+         SET deletion_requested_at = $2, deletion_scheduled_at = $3, deletion_status = 'pending', updated_at = NOW()
+         WHERE id = $1`,
+        [userId, now, scheduledAt]
+      );
+
+      // Cancel active bookings
+      const activeBookings = await client.query<{ id: string; payload: DateBooking }>(
+        "SELECT id, payload FROM bookings WHERE user_id = $1",
+        [userId]
+      );
+      for (const row of activeBookings.rows) {
+        const booking = row.payload;
+        if (booking.status !== "cancelled" && booking.status !== "completed") {
+          booking.status = "cancelled";
+          booking.cancellationReason = "Account deletion requested";
+          booking.cancelledAt = now.toISOString();
+          booking.updatedAt = now.toISOString();
+          await client.query(
+            "UPDATE bookings SET payload = $2, updated_at = NOW() WHERE id = $1",
+            [row.id, booking]
+          );
+        }
+      }
+
+      // Revoke all sessions
+      await this.authService.invalidateAllUserSessions(userId);
+
+      // Notify user
+      const state = await this.loadState(userId, client);
+      await this.pushNotification(
+        userId,
+        state,
+        "Account deletion requested",
+        `Your account will be permanently deleted on ${scheduledAt.toLocaleDateString("en-NG")}. You can cancel this from Settings within ${this.DELETION_GRACE_PERIOD_DAYS} days.`,
+        "Update",
+        client
+      );
+      await this.saveState(userId, state, client);
+
+      return {
+        deletionRequestedAt: now.toISOString(),
+        deletionScheduledAt: scheduledAt.toISOString(),
+        status: "pending" as const,
+        gracePeriodDays: this.DELETION_GRACE_PERIOD_DAYS
+      };
+    });
+  }
+
+  /**
+   * Cancel a pending account deletion within the grace period.
+   */
+  async cancelAccountDeletion(rawUserId?: string): Promise<{ cancelled: boolean }> {
+    const userId = this.resolveUserId(rawUserId);
+
+    return this.database.withTransaction(async (client) => {
+      const result = await client.query<{ deletion_status: string; deletion_scheduled_at: string }>(
+        "SELECT deletion_status, deletion_scheduled_at FROM users WHERE id = $1",
+        [userId]
+      );
+
+      if (result.rows.length === 0) {
+        throw new Error("User not found");
+      }
+
+      if (result.rows[0].deletion_status !== "pending") {
+        throw new Error("No pending deletion to cancel");
+      }
+
+      await client.query(
+        `UPDATE users 
+         SET deletion_requested_at = NULL, deletion_scheduled_at = NULL, deletion_status = 'cancelled', updated_at = NOW()
+         WHERE id = $1`,
+        [userId]
+      );
+
+      const state = await this.loadState(userId, client);
+      await this.pushNotification(
+        userId,
+        state,
+        "Account deletion cancelled",
+        "Your account deletion has been cancelled. Your account is fully restored.",
+        "Update",
+        client
+      );
+      await this.saveState(userId, state, client);
+
+      return { cancelled: true };
+    });
+  }
+
+  /**
+   * Get account deletion status for the current user.
+   */
+  async getAccountDeletionStatus(rawUserId?: string): Promise<{ status: string | null; scheduledAt: string | null }> {
+    const userId = this.resolveUserId(rawUserId);
+
+    const result = await this.database.query<{ deletion_status: string | null; deletion_scheduled_at: string | null }>(
+      "SELECT deletion_status, deletion_scheduled_at FROM users WHERE id = $1",
+      [userId]
+    );
+
+    if (result.rows.length === 0) {
+      return { status: null, scheduledAt: null };
+    }
+
+    return {
+      status: result.rows[0].deletion_status,
+      scheduledAt: result.rows[0].deletion_scheduled_at
+    };
+  }
+
+  /**
+   * Hard-delete: permanently removes/anonymizes user data.
+   * Called by a scheduled job for accounts past their grace period.
+   */
+  async processScheduledDeletions(): Promise<{ processed: number }> {
+    const now = new Date();
+    const pendingResult = await this.database.query<{ id: string }>(
+      "SELECT id FROM users WHERE deletion_status = 'pending' AND deletion_scheduled_at <= $1",
+      [now]
+    );
+
+    let processed = 0;
+    for (const row of pendingResult.rows) {
+      await this.hardDeleteUser(row.id);
+      processed++;
+    }
+
+    return { processed };
+  }
+
+  /**
+   * Hard-delete a single user: anonymize financial records, remove personal data and media.
+   */
+  async hardDeleteUser(userId: string): Promise<void> {
+    await this.database.withTransaction(async (client) => {
+      const anonymizedId = `deleted-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+
+      // Anonymize bookings (keep for financial audit trail)
+      const bookingRows = await client.query<{ id: string; payload: DateBooking }>(
+        "SELECT id, payload FROM bookings WHERE user_id = $1",
+        [userId]
+      );
+      for (const row of bookingRows.rows) {
+        const booking = row.payload;
+        booking.counterpartName = "[deleted]";
+        booking.matchId = anonymizedId;
+        await client.query(
+          "UPDATE bookings SET payload = $2, updated_at = NOW() WHERE id = $1",
+          [row.id, booking]
+        );
+      }
+
+      // Anonymize payments (keep for financial audit trail — keep user_id FK intact)
+      // Payments already don't contain personal data in their payload
+
+      // Delete personal data tables
+      await client.query("DELETE FROM user_states WHERE user_id = $1", [userId]);
+      await client.query("DELETE FROM sessions WHERE user_id = $1", [userId]);
+      await client.query("DELETE FROM notifications WHERE user_id = $1", [userId]);
+      await client.query("DELETE FROM reactions WHERE user_id = $1", [userId]);
+      await client.query("DELETE FROM rounds WHERE user_id = $1", [userId]);
+      await client.query("DELETE FROM safety_reports WHERE user_id = $1", [userId]);
+      await client.query("DELETE FROM selfie_submissions WHERE user_id = $1", [userId]);
+      await client.query("DELETE FROM gov_id_submissions WHERE user_id = $1", [userId]);
+      await client.query("DELETE FROM terms_acceptances WHERE user_id = $1", [userId]);
+      await client.query("DELETE FROM booking_support_requests WHERE user_id = $1", [userId]);
+      await client.query("DELETE FROM device_tokens WHERE user_id = $1", [userId]);
+      await client.query("DELETE FROM data_export_requests WHERE user_id = $1", [userId]);
+
+      // Delete media files from storage
+      try {
+        const mediaResult = await client.query<{ storage_url: string }>(
+          "SELECT storage_url FROM profile_media WHERE user_id = $1",
+          [userId]
+        );
+        const fs = await import("fs/promises");
+        const path = await import("path");
+        for (const media of mediaResult.rows) {
+          try {
+            const filepath = path.join(process.cwd(), media.storage_url);
+            await fs.unlink(filepath);
+          } catch {
+            // File may already be gone
+          }
+        }
+      } catch {
+        // Media deletion is best-effort
+      }
+
+      await client.query("DELETE FROM profile_media WHERE user_id = $1", [userId]);
+
+      // Remove the user record (or anonymize it)
+      await client.query(
+        `UPDATE users 
+         SET phone_number = $2, deletion_status = 'completed', updated_at = NOW()
+         WHERE id = $1`,
+        [userId, `deleted-${anonymizedId}`]
+      );
+    });
+  }
+
+  /**
+   * Request a data export — rate-limited to 1 per 24 hours.
+   */
+  async requestDataExport(rawUserId?: string): Promise<DataExportPayload> {
+    const userId = this.resolveUserId(rawUserId);
+    await this.ensureUser(userId);
+
+    return this.database.withTransaction(async (client) => {
+      // Rate limit check: 1 per 24 hours
+      const recentExport = await client.query<{ id: string }>(
+        "SELECT id FROM data_export_requests WHERE user_id = $1 AND created_at > NOW() - INTERVAL '24 hours' LIMIT 1",
+        [userId]
+      );
+      if (recentExport.rows.length > 0) {
+        throw new Error("Data export already requested in the last 24 hours. Please try again later.");
+      }
+
+      const exportId = this.generateId();
+      const state = await this.loadState(userId, client);
+
+      // Collect all user data
+      const bookings = await this.loadBookings(userId, client);
+      const notifications = await this.loadNotifications(userId, client);
+      const termsResult = await client.query<{ terms_version: string; privacy_version: string; accepted_at: string }>(
+        "SELECT terms_version, privacy_version, accepted_at FROM terms_acceptances WHERE user_id = $1 ORDER BY accepted_at DESC",
+        [userId]
+      );
+
+      const exportData: DataExportPayload = {
+        exportedAt: new Date().toISOString(),
+        profile: state.editableProfile,
+        accountSettings: state.accountSettings,
+        datingPreferences: state.datingPreferences,
+        verification: {
+          phoneVerified: state.verification.phoneVerified,
+          selfieVerified: state.verification.selfieVerified,
+          governmentIdVerified: state.verification.governmentIdVerified
+        },
+        bookingHistory: bookings.map(b => ({
+          id: b.id,
+          status: b.status,
+          venueName: b.venueName,
+          city: b.city,
+          startAt: b.startAt,
+          createdAt: b.createdAt
+        })),
+        notificationHistory: notifications.map(n => ({
+          title: n.title,
+          body: n.body,
+          category: n.category
+        })),
+        termsAcceptances: termsResult.rows.map(r => ({
+          termsVersion: r.terms_version,
+          privacyVersion: r.privacy_version,
+          acceptedAt: r.accepted_at
+        }))
+      };
+
+      // Store export record
+      await client.query(
+        "INSERT INTO data_export_requests (id, user_id, status, export_data, created_at, completed_at) VALUES ($1, $2, 'completed', $3, NOW(), NOW())",
+        [exportId, userId, exportData]
+      );
+
+      return exportData;
+    });
+  }
+
+  /**
+   * Update privacy/terms consent with version tracking.
+   */
+  async acceptPrivacyConsent(termsVersion: string, privacyVersion: string, rawUserId?: string): Promise<{ accepted: boolean }> {
+    const userId = this.resolveUserId(rawUserId);
+    await this.ensureUser(userId);
+
+    await this.database.withTransaction(async (client) => {
+      await client.query(
+        `INSERT INTO terms_acceptances (id, user_id, accepted_at, terms_version, privacy_version, consent_type)
+         VALUES ($1, $2, NOW(), $3, $4, 'policy_update')`,
+        [this.generateId(), userId, termsVersion, privacyVersion]
+      );
+    });
+
+    return { accepted: true };
+  }
+
+  /**
+   * Get the latest consent version for a user.
+   */
+  async getConsentStatus(rawUserId?: string): Promise<{ latestTermsVersion: string | null; latestPrivacyVersion: string | null; acceptedAt: string | null }> {
+    const userId = this.resolveUserId(rawUserId);
+
+    const result = await this.database.query<{ terms_version: string; privacy_version: string; accepted_at: string }>(
+      "SELECT terms_version, privacy_version, accepted_at FROM terms_acceptances WHERE user_id = $1 ORDER BY accepted_at DESC LIMIT 1",
+      [userId]
+    );
+
+    if (result.rows.length === 0) {
+      return { latestTermsVersion: null, latestPrivacyVersion: null, acceptedAt: null };
+    }
+
+    return {
+      latestTermsVersion: result.rows[0].terms_version,
+      latestPrivacyVersion: result.rows[0].privacy_version,
+      acceptedAt: result.rows[0].accepted_at
+    };
   }
 
   private resolveUserId(rawUserId?: string) {
