@@ -66,6 +66,8 @@ fun AccountDeletionScreen(
                     Spacer(Modifier.height(12.dp))
                     ActionButton(
                         label = if (isLoading) "Exporting..." else "Export My Data",
+                        background = BrandColors.Forest,
+                        textColor = Color.White,
                         onClick = onRequestExport,
                         enabled = !isLoading,
                     )
