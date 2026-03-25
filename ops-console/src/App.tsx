@@ -206,7 +206,7 @@ export function App() {
       setLoading(true);
       const response = await fetch(`${API_BASE}/ops/dashboard`, {
         headers: {
-          "x-user-id": "demo-user"
+          "x-user-id": "ops-admin"
         }
       });
       if (!response.ok) {
@@ -378,7 +378,7 @@ export function App() {
       const response = await fetch(`${API_BASE}/ops/reports/${reportId}/resolve`, {
         method: "POST",
         headers: {
-          "x-user-id": "demo-user"
+          "x-user-id": "ops-admin"
         }
       });
       if (!response.ok) {
@@ -399,7 +399,7 @@ export function App() {
       const response = await fetch(`${API_BASE}/ops/reports/${reportId}/investigate`, {
         method: "POST",
         headers: {
-          "x-user-id": "demo-user"
+          "x-user-id": "ops-admin"
         }
       });
       if (!response.ok) {
@@ -438,7 +438,7 @@ export function App() {
       const response = await fetch(`${API_BASE}/ops/bookings/${bookingId}/escalate`, {
         method: "POST",
         headers: {
-          "x-user-id": "demo-user"
+          "x-user-id": "ops-admin"
         }
       });
       if (!response.ok) {

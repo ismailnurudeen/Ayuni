@@ -1,6 +1,5 @@
 package com.ayuni.app.ui
 
-import com.ayuni.app.data.DemoSeed
 import com.ayuni.app.domain.DateBooking
 import com.ayuni.app.domain.DatingPreferences
 import com.ayuni.app.domain.EditableProfile
@@ -9,7 +8,11 @@ import com.ayuni.app.domain.MatchroundState
 import com.ayuni.app.domain.AccountSettings
 import com.ayuni.app.domain.AppPreferences
 import com.ayuni.app.domain.OnboardingState
+import com.ayuni.app.domain.OnboardingStep
+import com.ayuni.app.domain.ProfileQa
 import com.ayuni.app.domain.SafetyState
+import com.ayuni.app.domain.ShareChannel
+import com.ayuni.app.domain.SignupMethod
 import com.ayuni.app.domain.SuggestionProfile
 import com.ayuni.app.domain.UserSummary
 import com.ayuni.app.domain.VerificationStatus
@@ -31,19 +34,74 @@ data class AppScreenState(
     val appPreferences: AppPreferences,
 ) {
     companion object {
-        fun demo(): AppScreenState = AppScreenState(
-            onboarding = DemoSeed.onboarding,
-            verification = DemoSeed.verification,
-            suggestions = DemoSeed.suggestions,
-            bookings = DemoSeed.bookings,
-            safety = DemoSeed.safety,
-            matchround = DemoSeed.matchround,
-            userSummary = DemoSeed.userSummary,
-            notifications = DemoSeed.notifications,
-            editableProfile = DemoSeed.editableProfile,
-            datingPreferences = DemoSeed.datingPreferences,
-            accountSettings = DemoSeed.accountSettings,
-            appPreferences = DemoSeed.appPreferences,
+        fun empty(): AppScreenState = AppScreenState(
+            onboarding = OnboardingState(
+                signupMethod = SignupMethod.Phone,
+                step = OnboardingStep.Welcome,
+                completed = false,
+            ),
+            verification = VerificationStatus(
+                phoneVerified = false,
+                selfieVerified = false,
+                governmentIdVerified = false,
+            ),
+            suggestions = emptyList(),
+            bookings = emptyList(),
+            safety = SafetyState(
+                trustedContactName = "",
+                trustedContactChannel = ShareChannel.WhatsApp,
+            ),
+            matchround = MatchroundState(
+                currentWindowLabel = "",
+                nextMatchroundLabel = "",
+                countdown = "00:00:00",
+                usersLeftToday = 0,
+            ),
+            userSummary = UserSummary(
+                firstName = "",
+                completionScore = 0,
+                completionLabel = "",
+                profilePhotoMood = "",
+                badges = emptyList(),
+            ),
+            notifications = emptyList(),
+            editableProfile = EditableProfile(
+                mediaSlots = emptyList(),
+                interests = emptyList(),
+                traits = emptyList(),
+                bio = "",
+                qas = emptyList(),
+                religion = emptyList(),
+                smoking = "",
+                drinking = "",
+                education = "",
+                job = "",
+                datingIntention = "",
+                sexualOrientation = "",
+                languages = emptyList(),
+            ),
+            datingPreferences = DatingPreferences(
+                ageRange = "",
+                genderIdentity = "",
+                heightRange = "",
+                dateCities = emptyList(),
+                dateAreas = emptyList(),
+                preferredDateActivities = emptyList(),
+            ),
+            accountSettings = AccountSettings(
+                name = "",
+                gender = "",
+                birthDate = "",
+                height = "",
+                residence = "",
+                educationLevel = "",
+                email = "",
+                phoneNumber = "",
+            ),
+            appPreferences = AppPreferences(
+                notifications = "",
+                appLanguage = "English",
+            ),
         )
     }
 }

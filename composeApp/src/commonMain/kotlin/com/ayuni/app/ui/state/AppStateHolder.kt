@@ -21,7 +21,7 @@ class AppStateHolder(
     private val tokenStorage: TokenStorage,
     private val scope: CoroutineScope,
 ) {
-    private val _state = mutableStateOf(AppScreenState.demo())
+    private val _state = mutableStateOf(AppScreenState.empty())
     val state: State<AppScreenState> = _state
 
     private val _isLoading = mutableStateOf(true)

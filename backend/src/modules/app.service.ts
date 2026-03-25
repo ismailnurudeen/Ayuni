@@ -1156,11 +1156,7 @@ export class AppService implements OnModuleInit {
   }
 
   async getOpsDashboard(rawUserId?: string): Promise<OpsDashboard> {
-    const userId = this.resolveUserId(rawUserId);
-    await this.ensureUser(userId);
-    
-    // Load user's own state and basic data
-    const state = await this.loadState(userId);
+    const opsUserId = rawUserId?.trim() || "ops-system";
     
     // Load ALL reports for ops dashboard (not filtered by user)
     const reportRows = await this.database.query<{ payload: SafetyReport }>(
@@ -1168,14 +1164,13 @@ export class AppService implements OnModuleInit {
     );
     const reports = reportRows.rows.map((row: { payload: SafetyReport }) => row.payload);
     
-    // Load other aggregate data for this user
-    const [bookings, suggestions, reactions, venues, supportQueue, deviceTokenCount] = await Promise.all([
-      this.loadBookings(userId),
-      this.loadRoundSuggestions(userId),
-      this.loadReactions(userId),
+    // Load global aggregate data for ops dashboard
+    const [venues, supportQueue, deviceTokenCount, totalReactionsRows, allBookings] = await Promise.all([
       this.loadAllVenues(),
-      this.getSupportQueue(userId),
-      this.database.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM device_tokens")
+      this.getSupportQueue(),
+      this.database.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM device_tokens"),
+      this.database.query<{ reaction: string; count: string }>("SELECT reaction, COUNT(*)::text AS count FROM reactions GROUP BY reaction"),
+      this.database.query<{ payload: any }>("SELECT payload FROM bookings ORDER BY created_at DESC LIMIT 100"),
     ]);
 
     // Fetch pending selfie submissions
@@ -1258,17 +1253,23 @@ export class AppService implements OnModuleInit {
     
     const requireGovIdToggle = toggleRows.rows.find(r => r.name === "require_gov_id_for_booking");
 
+    const reactionCounts: Record<string, number> = {};
+    for (const row of totalReactionsRows.rows) {
+      reactionCounts[row.reaction] = parseInt(row.count, 10);
+    }
+    const bookings = allBookings.rows.map((row: { payload: any }) => row.payload);
+
     return {
       overview: {
         pendingReports: reports.filter((item) => item.status === "open").length,
         activeVenueCount: venues.filter((item) => item.status === "active" || item.readiness === "ready").length,
-        totalAcceptedThisRound: Object.values(reactions).filter((item) => item === "Accepted").length,
-        totalDeclinedThisRound: Object.values(reactions).filter((item) => item === "Declined").length,
-        onboardingCompleted: state.onboarding.completed,
+        totalAcceptedThisRound: reactionCounts["Accepted"] || 0,
+        totalDeclinedThisRound: reactionCounts["Declined"] || 0,
+        onboardingCompleted: false,
         supportWindow: "16:00-23:00 WAT",
         pendingSelfieReviews: selfieQueue.length,
         pendingGovIdReviews: govIdQueue.length,
-        activeFreezes: state.safety.activeFreeze ? 1 : 0,
+        activeFreezes: 0,
         pendingSupportRequests: supportQueue.length,
         totalDeviceTokens: parseInt(deviceTokenCount.rows[0]?.count || "0", 10)
       },
@@ -1281,27 +1282,18 @@ export class AppService implements OnModuleInit {
       supportQueue,
       venueNetwork: venues,
       bookings,
-      verification: state.verification,
-      profile: state.editableProfile,
-      datingPreferences: state.datingPreferences,
-      accountSettings: state.accountSettings,
-      safety: state.safety,
+      verification: { phoneVerified: false, selfieVerified: false, governmentIdVerified: false, idRequiredBeforeDate: true, govIdStatus: "not_submitted" },
+      profile: { mediaSlots: [], interests: [], traits: [], bio: "", qas: [], religion: [], smoking: "", drinking: "", education: "", job: "", datingIntention: "", sexualOrientation: "", languages: [] },
+      datingPreferences: { ageRange: "", genderIdentity: "", heightRange: "", dateCities: [], dateAreas: [], preferredDateActivities: [] },
+      accountSettings: { name: "", gender: "", birthDate: "", height: "", residence: "", educationLevel: "", email: "", phoneNumber: "" },
+      safety: { trustedContactName: "", trustedContactChannel: "WhatsApp", incidents: [], warnings: 0, tokenLossPenalties: 0 },
       notifications: [],
-      reactions: Object.entries(reactions).map(([profileId, reaction]) => {
-        const profile = suggestions.find((item) => item.id === profileId);
-        return {
-          profileId,
-          displayName: profile?.displayName ?? "Unknown",
-          city: profile?.city ?? "Lagos",
-          reaction
-        };
-      })
+      reactions: []
     };
   }
 
   async resolveReport(reportId: string, rawUserId?: string, resolutionNotes?: string) {
-    const userId = this.resolveUserId(rawUserId);
-    await this.ensureUser(userId);
+    const opsUserId = rawUserId?.trim() || "ops-system";
 
     await this.database.withTransaction(async (client) => {
       const row = await client.query<{ payload: SafetyReport }>(
@@ -1313,7 +1305,7 @@ export class AppService implements OnModuleInit {
         const report = row.rows[0].payload;
         report.status = "resolved";
         report.resolvedAt = new Date().toISOString();
-        report.resolvedBy = userId;
+        report.resolvedBy = opsUserId;
         report.resolutionNotes = resolutionNotes || "Resolved by ops";
         
         await client.query(
@@ -1323,12 +1315,11 @@ export class AppService implements OnModuleInit {
       }
     });
 
-    return this.getOpsDashboard(userId);
+    return this.getOpsDashboard(opsUserId);
   }
 
   async investigateReport(reportId: string, rawUserId?: string) {
-    const userId = this.resolveUserId(rawUserId);
-    await this.ensureUser(userId);
+    const opsUserId = rawUserId?.trim() || "ops-system";
 
     await this.database.withTransaction(async (client) => {
       const row = await client.query<{ payload: SafetyReport }>(
@@ -1340,7 +1331,7 @@ export class AppService implements OnModuleInit {
         const report = row.rows[0].payload;
         report.status = "investigating";
         report.investigatedAt = new Date().toISOString();
-        report.investigatedBy = userId;
+        report.investigatedBy = opsUserId;
         
         await client.query(
           "UPDATE safety_reports SET status = $1, payload = $2, updated_at = NOW() WHERE id = $3",
@@ -1349,23 +1340,26 @@ export class AppService implements OnModuleInit {
       }
     });
 
-    return this.getOpsDashboard(userId);
+    return this.getOpsDashboard(opsUserId);
   }
 
   async escalateBooking(bookingId: string, rawUserId?: string) {
-    const userId = this.resolveUserId(rawUserId);
-    await this.ensureUser(userId);
+    const opsUserId = rawUserId?.trim() || "ops-system";
 
     await this.database.withTransaction(async (client) => {
-      const booking = await this.loadBookingById(userId, bookingId, client);
-      if (!booking) {
-        return;
+      const result = await client.query<{ user_id: string; payload: any }>(
+        "SELECT user_id, payload FROM bookings WHERE id = $1 LIMIT 1",
+        [bookingId]
+      );
+      if (result.rows.length > 0) {
+        const booking = result.rows[0].payload;
+        const bookingUserId = result.rows[0].user_id;
+        booking.checkInStatus = "SupportFlagged";
+        await client.query("UPDATE bookings SET payload = $2, updated_at = NOW() WHERE id = $1 AND user_id = $3", [bookingId, booking, bookingUserId]);
       }
-      booking.checkInStatus = "SupportFlagged";
-      await this.saveBooking(userId, booking, client);
     });
 
-    return this.getOpsDashboard(userId);
+    return this.getOpsDashboard(opsUserId);
   }
 
   async toggleVenue(venueId: string) {
