@@ -220,4 +220,33 @@ class AyuniApiClient(
             contentType(ContentType.Application.Json)
             setBody(SafetyReportRequest(category = category, details = details))
         }.body<SafetyReportResponse>()
+
+    // ── P1-11: Account Deletion & Privacy ───────────────────────────
+
+    suspend fun requestAccountDeletion(): AccountDeletionResponse =
+        httpClient.post("$baseUrl/mobile/account/delete") {
+            contentType(ContentType.Application.Json)
+        }.body<AccountDeletionResponse>()
+
+    suspend fun cancelAccountDeletion(): CancelDeletionResponse =
+        httpClient.post("$baseUrl/mobile/account/delete/cancel") {
+            contentType(ContentType.Application.Json)
+        }.body<CancelDeletionResponse>()
+
+    suspend fun getAccountDeletionStatus(): DeletionStatusResponse =
+        httpClient.get("$baseUrl/mobile/account/deletion-status").body<DeletionStatusResponse>()
+
+    suspend fun requestDataExport(): DataExportResponse =
+        httpClient.post("$baseUrl/mobile/account/export") {
+            contentType(ContentType.Application.Json)
+        }.body<DataExportResponse>()
+
+    suspend fun getConsentStatus(): ConsentStatusResponse =
+        httpClient.get("$baseUrl/mobile/account/consent").body<ConsentStatusResponse>()
+
+    suspend fun acceptPrivacyConsent(termsVersion: String, privacyVersion: String): ConsentAcceptResponse =
+        httpClient.post("$baseUrl/mobile/account/consent") {
+            contentType(ContentType.Application.Json)
+            setBody(ConsentAcceptRequest(termsVersion = termsVersion, privacyVersion = privacyVersion))
+        }.body<ConsentAcceptResponse>()
 }

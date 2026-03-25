@@ -18,4 +18,6 @@ enum class ProfileScreen {
     EditEducation,
     EditJob,
     EditDatingIntention,
+    // P1-11: Account Deletion & Privacy
+    AccountDeletion,
 }

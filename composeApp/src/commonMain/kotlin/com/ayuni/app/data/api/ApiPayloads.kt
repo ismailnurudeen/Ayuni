@@ -196,3 +196,50 @@ data class SafetyReportResponse(
     val reportId: String = "",
     val message: String? = null,
 )
+
+// ── P1-11: Account Deletion & Privacy ───────────────────────────────
+
+@Serializable
+data class AccountDeletionResponse(
+    val deletionRequestedAt: String = "",
+    val deletionScheduledAt: String = "",
+    val status: String = "",
+    val gracePeriodDays: Int = 30,
+)
+
+@Serializable
+data class CancelDeletionResponse(
+    val cancelled: Boolean,
+)
+
+@Serializable
+data class DeletionStatusResponse(
+    val status: String? = null,
+    val scheduledAt: String? = null,
+)
+
+@Serializable
+data class DataExportResponse(
+    val exportedAt: String = "",
+    val profile: com.ayuni.app.domain.EditableProfile? = null,
+    val accountSettings: com.ayuni.app.domain.AccountSettings? = null,
+    val datingPreferences: com.ayuni.app.domain.DatingPreferences? = null,
+)
+
+@Serializable
+data class ConsentStatusResponse(
+    val latestTermsVersion: String? = null,
+    val latestPrivacyVersion: String? = null,
+    val acceptedAt: String? = null,
+)
+
+@Serializable
+data class ConsentAcceptRequest(
+    val termsVersion: String,
+    val privacyVersion: String,
+)
+
+@Serializable
+data class ConsentAcceptResponse(
+    val accepted: Boolean,
+)

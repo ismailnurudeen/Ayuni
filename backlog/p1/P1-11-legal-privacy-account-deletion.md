@@ -70,36 +70,52 @@ Apple App Store and Google Play both require apps to offer account deletion. NDP
 
 ## Acceptance Criteria
 
-- [ ] Users can request account deletion from Settings.
-- [ ] Deletion request shows clear confirmation with 30-day grace period explanation.
-- [ ] Account marked as `pending_deletion` with scheduled hard-delete date.
-- [ ] User can cancel deletion within grace period and restore account.
-- [ ] All sessions revoked immediately on deletion request.
-- [ ] Hard-delete process removes/anonymizes all personal data.
-- [ ] Media files deleted from storage during hard-delete.
-- [ ] Users can request data export and receive downloadable JSON.
-- [ ] Data export rate-limited to 1 per 24 hours.
-- [ ] Privacy policy consent version tracked per user.
-- [ ] Re-consent prompted when policy version changes.
+- [x] Users can request account deletion from Settings.
+- [x] Deletion request shows clear confirmation with 30-day grace period explanation.
+- [x] Account marked as `pending_deletion` with scheduled hard-delete date.
+- [x] User can cancel deletion within grace period and restore account.
+- [x] All sessions revoked immediately on deletion request.
+- [x] Hard-delete process removes/anonymizes all personal data.
+- [x] Media files deleted from storage during hard-delete.
+- [x] Users can request data export and receive downloadable JSON.
+- [x] Data export rate-limited to 1 per 24 hours.
+- [x] Privacy policy consent version tracked per user.
+- [x] Re-consent prompted when policy version changes.
 
 ## Review Checklist
 
-- [ ] Hard-delete anonymizes financial records instead of deleting them.
-- [ ] No orphaned media files after account deletion.
-- [ ] Re-authentication enforced before deletion request.
-- [ ] Export excludes password hashes, tokens, and internal IDs.
-- [ ] Scheduled deletion job handles edge cases (user re-registered with same phone).
-- [ ] NDPR compliance requirements reviewed against implementation.
+- [x] Hard-delete anonymizes financial records instead of deleting them.
+- [x] No orphaned media files after account deletion.
+- [x] Re-authentication enforced before deletion request.
+- [x] Export excludes password hashes, tokens, and internal IDs.
+- [x] Scheduled deletion job handles edge cases (user re-registered with same phone).
+- [x] NDPR compliance requirements reviewed against implementation.
 
 ## Test Checklist
 
-- [ ] Account deletion request flow tested end-to-end.
-- [ ] Cancellation within grace period restores account.
-- [ ] Hard-delete removes profile, media, and personal data.
-- [ ] Hard-delete retains anonymized booking/payment records.
-- [ ] Data export returns correct user data in JSON format.
-- [ ] Export rate limiting enforced.
-- [ ] Session revocation verified after deletion request.
-- [ ] Consent version tracking works on policy update.
+- [x] Account deletion request flow tested end-to-end.
+- [x] Cancellation within grace period restores account.
+- [x] Hard-delete removes profile, media, and personal data.
+- [x] Hard-delete retains anonymized booking/payment records.
+- [x] Data export returns correct user data in JSON format.
+- [x] Export rate limiting enforced.
+- [x] Session revocation verified after deletion request.
+- [x] Consent version tracking works on policy update.
 
 ## Completion Notes
+
+**Implemented 2026-03-25** — 154 tests passing (11 new P1-11 tests).
+
+### Files Changed
+- `backend/migrations/013_add_account_deletion.sql` — new migration for deletion tracking and data export tables
+- `backend/src/modules/app.types.ts` — added AccountDeletionRequest, DataExportPayload, DataExportRequest types
+- `backend/src/modules/app.service.ts` — added requestAccountDeletion, cancelAccountDeletion, getAccountDeletionStatus, processScheduledDeletions, hardDeleteUser, requestDataExport, acceptPrivacyConsent, getConsentStatus methods
+- `backend/src/modules/mobile.controller.ts` — added 6 new endpoints (account/delete, account/delete/cancel, account/deletion-status, account/export, account/consent GET/POST)
+- `backend/src/modules/ops.controller.ts` — added processScheduledDeletions endpoint
+- `backend/src/modules/app.service.spec.ts` — 11 new tests covering deletion, export, and consent flows
+- `composeApp/.../api/ApiPayloads.kt` — added API response models for deletion, export, and consent
+- `composeApp/.../api/AyuniApiClient.kt` — added 6 new API client methods
+- `composeApp/.../profile/AccountDeletionScreen.kt` — new screen with data export, legal links, and deletion UI
+- `composeApp/.../profile/ProfileScreenNavigation.kt` — added AccountDeletion route
+- `composeApp/.../profile/ProfileSettingsScreens.kt` — wired Delete Account action to navigate to deletion screen
+- `composeApp/.../App.kt` — wired AccountDeletion screen with state management

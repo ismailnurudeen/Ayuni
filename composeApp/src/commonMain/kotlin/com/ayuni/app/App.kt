@@ -12,6 +12,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
@@ -40,6 +41,7 @@ import com.ayuni.app.ui.state.rememberProfileStateHolder
 import com.ayuni.app.ui.state.rememberRoundStateHolder
 import kotlinx.datetime.*
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.time.Clock
 
 @Composable
@@ -445,7 +447,8 @@ fun AyuniApp() {
                                         profileStateHolder.updateAccountSettings(settings) {
                                             profileScreen = ProfileScreen.Hub
                                         }
-                                    }
+                                    },
+                                    onOpenAccountDeletion = { profileScreen = ProfileScreen.AccountDeletion },
                                 )
 
                                 ProfileScreen.AppSettings -> AppSettingsScreen(
@@ -458,6 +461,77 @@ fun AyuniApp() {
                                         }
                                     }
                                 )
+
+                                ProfileScreen.AccountDeletion -> {
+                                    var deletionStatus by remember { mutableStateOf<String?>(null) }
+                                    var deletionScheduledAt by remember { mutableStateOf<String?>(null) }
+                                    var deletionLoading by remember { mutableStateOf(false) }
+                                    var deletionError by remember { mutableStateOf<String?>(null) }
+                                    val deletionScope = rememberCoroutineScope()
+
+                                    LaunchedEffect(Unit) {
+                                        try {
+                                            val status = apiClient.getAccountDeletionStatus()
+                                            deletionStatus = status.status
+                                            deletionScheduledAt = status.scheduledAt
+                                        } catch (_: Exception) { }
+                                    }
+
+                                    AccountDeletionScreen(
+                                        padding = innerPadding,
+                                        deletionStatus = deletionStatus,
+                                        deletionScheduledAt = deletionScheduledAt,
+                                        isLoading = deletionLoading,
+                                        errorMessage = deletionError,
+                                        onRequestDeletion = {
+                                            deletionLoading = true
+                                            deletionError = null
+                                            deletionScope.launch {
+                                                try {
+                                                    val result = apiClient.requestAccountDeletion()
+                                                    deletionStatus = result.status
+                                                    deletionScheduledAt = result.deletionScheduledAt
+                                                    tokenStorage.clearTokens()
+                                                } catch (e: Exception) {
+                                                    deletionError = e.message ?: "Failed to request deletion"
+                                                } finally {
+                                                    deletionLoading = false
+                                                }
+                                            }
+                                        },
+                                        onCancelDeletion = {
+                                            deletionLoading = true
+                                            deletionError = null
+                                            deletionScope.launch {
+                                                try {
+                                                    apiClient.cancelAccountDeletion()
+                                                    deletionStatus = null
+                                                    deletionScheduledAt = null
+                                                } catch (e: Exception) {
+                                                    deletionError = e.message ?: "Failed to cancel deletion"
+                                                } finally {
+                                                    deletionLoading = false
+                                                }
+                                            }
+                                        },
+                                        onRequestExport = {
+                                            deletionLoading = true
+                                            deletionError = null
+                                            deletionScope.launch {
+                                                try {
+                                                    apiClient.requestDataExport()
+                                                    deletionError = null
+                                                } catch (e: Exception) {
+                                                    deletionError = e.message ?: "Export failed"
+                                                } finally {
+                                                    deletionLoading = false
+                                                }
+                                            }
+                                        },
+                                        onClearError = { deletionError = null },
+                                        onBack = { profileScreen = ProfileScreen.AccountSettings },
+                                    )
+                                }
                             }
                         }
                     }

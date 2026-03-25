@@ -1045,6 +1045,7 @@ fun AccountSettingsScreen(
     settings: AccountSettings,
     onBack: () -> Unit,
     onSave: (AccountSettings) -> Unit,
+    onOpenAccountDeletion: () -> Unit = {},
 ) {
     var editedSettings by remember { mutableStateOf(settings) }
 
@@ -1072,7 +1073,7 @@ fun AccountSettingsScreen(
             DetailPane("Account actions", fillWidth = true) {
                 Text("Sign out", style = MaterialTheme.typography.titleMedium, color = BrandColors.Ink, modifier = Modifier.clickable { })
                 HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = BrandColors.PhotoGlow)
-                Text("Delete account", style = MaterialTheme.typography.titleMedium, color = BrandColors.RichCard, modifier = Modifier.clickable { })
+                Text("Delete account", style = MaterialTheme.typography.titleMedium, color = BrandColors.RichCard, modifier = Modifier.clickable { onOpenAccountDeletion() })
             }
         }
     }
