@@ -564,6 +564,44 @@ export type DataExportPayload = {
   }>;
 };
 
+// ── Ops User Management ────────────────────────────────────────────
+
+export type OpsUser = {
+  id: string;
+  phoneNumber: string;
+  name: string;
+  city: string;
+  onboardingStep: string;
+  onboardingCompleted: boolean;
+  phoneVerified: boolean;
+  selfieVerified: boolean;
+  governmentIdVerified: boolean;
+  isFrozen: boolean;
+  freezeReason?: string;
+  bookingCount: number;
+  reportCount: number;
+  deletionStatus?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type OpsUserDetail = OpsUser & {
+  bio: string;
+  interests: string[];
+  traits: string[];
+  education: string;
+  occupation: string;
+  gender: string;
+  birthDate: string;
+  datingIntention: string;
+  warnings: number;
+  tokenLossPenalties: number;
+  incidents: SafetyIncident[];
+  activeFreeze?: AccountFreeze;
+  bookings: DateBooking[];
+  reports: SafetyReport[];
+};
+
 // ── Analytics ──────────────────────────────────────────────────────
 
 export type AnalyticsEvent = {

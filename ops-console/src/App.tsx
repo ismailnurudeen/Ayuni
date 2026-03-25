@@ -15,6 +15,55 @@ type SafetyReport = {
   resolutionNotes?: string;
 };
 
+type OpsUser = {
+  id: string;
+  phoneNumber: string;
+  name: string;
+  city: string;
+  onboardingStep: string;
+  onboardingCompleted: boolean;
+  phoneVerified: boolean;
+  selfieVerified: boolean;
+  governmentIdVerified: boolean;
+  isFrozen: boolean;
+  freezeReason?: string;
+  bookingCount: number;
+  reportCount: number;
+  deletionStatus?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type OpsUserDetail = OpsUser & {
+  bio: string;
+  interests: string[];
+  traits: string[];
+  education: string;
+  occupation: string;
+  gender: string;
+  birthDate: string;
+  datingIntention: string;
+  warnings: number;
+  tokenLossPenalties: number;
+  incidents: Array<{
+    id: string;
+    type: "NoShow" | "LateCancellation";
+    bookingId: string;
+    occurredAt: string;
+    reportId?: string;
+  }>;
+  activeFreeze?: {
+    id: string;
+    reason: string;
+    incidentCount: number;
+    frozenAt: string;
+    frozenUntil: string;
+    canAppeal: boolean;
+  };
+  bookings: DateBooking[];
+  reports: SafetyReport[];
+};
+
 type VenuePartner = {
   id: string;
   name: string;
@@ -201,6 +250,17 @@ export function App() {
   const [funnelData, setFunnelData] = useState<{ name: string; steps: { step: string; count: number }[]; period: string } | null>(null);
   const [funnelLoading, setFunnelLoading] = useState(false);
 
+  // User management state
+  const [userView, setUserView] = useState<"list" | "detail">("list");
+  const [userList, setUserList] = useState<OpsUser[]>([]);
+  const [userTotal, setUserTotal] = useState(0);
+  const [userSearch, setUserSearch] = useState("");
+  const [userStatusFilter, setUserStatusFilter] = useState("");
+  const [userCityFilter, setUserCityFilter] = useState("");
+  const [userOffset, setUserOffset] = useState(0);
+  const [selectedUser, setSelectedUser] = useState<OpsUserDetail | null>(null);
+  const [userLoading, setUserLoading] = useState(false);
+
   const fetchDashboard = async () => {
     try {
       setLoading(true);
@@ -271,6 +331,95 @@ export function App() {
   useEffect(() => {
     fetchFunnel(selectedFunnel);
   }, [selectedFunnel]);
+
+  // ── User Management Handlers ─────────────────────────────────────
+
+  const fetchUserList = async () => {
+    try {
+      setUserLoading(true);
+      const params = new URLSearchParams();
+      if (userSearch) params.set("search", userSearch);
+      if (userStatusFilter) params.set("status", userStatusFilter);
+      if (userCityFilter) params.set("city", userCityFilter);
+      params.set("limit", "25");
+      params.set("offset", String(userOffset));
+      const qs = params.toString();
+      const response = await fetch(`${API_BASE}/ops/users${qs ? `?${qs}` : ""}`, {
+        headers: { "x-user-id": "ops-user" }
+      });
+      if (!response.ok) throw new Error("Failed to fetch users");
+      const data = await response.json();
+      setUserList(data.users);
+      setUserTotal(data.total);
+    } catch (err) {
+      console.error("Error fetching users:", err);
+    } finally {
+      setUserLoading(false);
+    }
+  };
+
+  const fetchUserDetail = async (userId: string) => {
+    try {
+      setActionLoading(userId);
+      const response = await fetch(`${API_BASE}/ops/users/${encodeURIComponent(userId)}`, {
+        headers: { "x-user-id": "ops-user" }
+      });
+      if (!response.ok) throw new Error("Failed to fetch user detail");
+      const data = await response.json();
+      setSelectedUser(data);
+      setUserView("detail");
+    } catch (err) {
+      console.error("Error fetching user detail:", err);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleFreezeUser = async (userId: string) => {
+    const reason = prompt("Freeze reason:");
+    if (!reason) return;
+    const daysStr = prompt("Freeze duration (days):", "30");
+    const durationDays = parseInt(daysStr || "30", 10) || 30;
+    try {
+      setActionLoading(userId);
+      const response = await fetch(`${API_BASE}/ops/users/${encodeURIComponent(userId)}/freeze`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-user-id": "ops-user" },
+        body: JSON.stringify({ reason, durationDays })
+      });
+      if (!response.ok) throw new Error("Failed to freeze user");
+      const data = await response.json();
+      setSelectedUser(data);
+      await fetchUserList();
+    } catch (err) {
+      console.error("Error freezing user:", err);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleUnfreezeUser = async (userId: string) => {
+    if (!confirm("Unfreeze this user?")) return;
+    try {
+      setActionLoading(userId);
+      const response = await fetch(`${API_BASE}/ops/users/${encodeURIComponent(userId)}/unfreeze`, {
+        method: "POST",
+        headers: { "x-user-id": "ops-user" }
+      });
+      if (!response.ok) throw new Error("Failed to unfreeze user");
+      const data = await response.json();
+      setSelectedUser(data);
+      await fetchUserList();
+    } catch (err) {
+      console.error("Error unfreezing user:", err);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  useEffect(() => {
+    fetchUserList();
+  }, [userSearch, userStatusFilter, userCityFilter, userOffset]);
 
   // ── Venue Management Handlers ────────────────────────────────────
 
@@ -1399,6 +1548,251 @@ export function App() {
                 </span>
               </div>
             ))
+          )}
+        </article>
+
+        <article className="panel" style={{ gridColumn: "1 / -1" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+            <h2>User Management ({userTotal} total)</h2>
+            {userView === "detail" && (
+              <button
+                onClick={() => { setUserView("list"); setSelectedUser(null); }}
+                style={{ padding: "0.4rem 0.8rem", fontSize: "0.85rem", cursor: "pointer", backgroundColor: "#6c757d", color: "white", border: "none", borderRadius: "4px" }}
+              >
+                Back to List
+              </button>
+            )}
+          </div>
+
+          {userView === "detail" && selectedUser && (
+            <div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1.5rem" }}>
+                <div>
+                  <h3 style={{ margin: "0 0 0.5rem" }}>{selectedUser.name}</h3>
+                  <p style={{ margin: "0.25rem 0", fontSize: "0.9rem" }}><strong>ID:</strong> {selectedUser.id}</p>
+                  <p style={{ margin: "0.25rem 0", fontSize: "0.9rem" }}><strong>Phone:</strong> {selectedUser.phoneNumber || "N/A"}</p>
+                  <p style={{ margin: "0.25rem 0", fontSize: "0.9rem" }}><strong>City:</strong> {selectedUser.city || "N/A"}</p>
+                  <p style={{ margin: "0.25rem 0", fontSize: "0.9rem" }}><strong>Gender:</strong> {selectedUser.gender || "N/A"}</p>
+                  <p style={{ margin: "0.25rem 0", fontSize: "0.9rem" }}><strong>Birth Date:</strong> {selectedUser.birthDate || "N/A"}</p>
+                  <p style={{ margin: "0.25rem 0", fontSize: "0.9rem" }}><strong>Joined:</strong> {new Date(selectedUser.createdAt).toLocaleDateString()}</p>
+                </div>
+                <div>
+                  <p style={{ margin: "0.25rem 0", fontSize: "0.9rem" }}><strong>Onboarding:</strong>{" "}
+                    <span style={{ color: selectedUser.onboardingCompleted ? "#4CAF50" : "#ffc107", fontWeight: "bold" }}>
+                      {selectedUser.onboardingCompleted ? "Complete" : selectedUser.onboardingStep}
+                    </span>
+                  </p>
+                  <p style={{ margin: "0.25rem 0", fontSize: "0.9rem" }}><strong>Education:</strong> {selectedUser.education || "N/A"}</p>
+                  <p style={{ margin: "0.25rem 0", fontSize: "0.9rem" }}><strong>Occupation:</strong> {selectedUser.occupation || "N/A"}</p>
+                  <p style={{ margin: "0.25rem 0", fontSize: "0.9rem" }}><strong>Intention:</strong> {selectedUser.datingIntention || "N/A"}</p>
+                  {selectedUser.bio && (
+                    <p style={{ margin: "0.25rem 0", fontSize: "0.9rem" }}><strong>Bio:</strong> {selectedUser.bio}</p>
+                  )}
+                  {selectedUser.interests.length > 0 && (
+                    <p style={{ margin: "0.25rem 0", fontSize: "0.9rem" }}><strong>Interests:</strong> {selectedUser.interests.join(", ")}</p>
+                  )}
+                  {selectedUser.traits.length > 0 && (
+                    <p style={{ margin: "0.25rem 0", fontSize: "0.9rem" }}><strong>Traits:</strong> {selectedUser.traits.join(", ")}</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Verification badges */}
+              <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginBottom: "1rem" }}>
+                <span style={{ padding: "0.3rem 0.6rem", borderRadius: "999px", fontSize: "0.8rem", fontWeight: 700, background: selectedUser.phoneVerified ? "#dcefe5" : "#f8f9fa", color: selectedUser.phoneVerified ? "#194a37" : "#999" }}>
+                  {selectedUser.phoneVerified ? "✓" : "○"} Phone
+                </span>
+                <span style={{ padding: "0.3rem 0.6rem", borderRadius: "999px", fontSize: "0.8rem", fontWeight: 700, background: selectedUser.selfieVerified ? "#dcefe5" : "#f8f9fa", color: selectedUser.selfieVerified ? "#194a37" : "#999" }}>
+                  {selectedUser.selfieVerified ? "✓" : "○"} Selfie
+                </span>
+                <span style={{ padding: "0.3rem 0.6rem", borderRadius: "999px", fontSize: "0.8rem", fontWeight: 700, background: selectedUser.governmentIdVerified ? "#dcefe5" : "#f8f9fa", color: selectedUser.governmentIdVerified ? "#194a37" : "#999" }}>
+                  {selectedUser.governmentIdVerified ? "✓" : "○"} Gov ID
+                </span>
+                {selectedUser.isFrozen && (
+                  <span style={{ padding: "0.3rem 0.6rem", borderRadius: "999px", fontSize: "0.8rem", fontWeight: 700, background: "#ffe1db", color: "#a0331f" }}>
+                    🔒 Frozen
+                  </span>
+                )}
+                {selectedUser.deletionStatus && (
+                  <span style={{ padding: "0.3rem 0.6rem", borderRadius: "999px", fontSize: "0.8rem", fontWeight: 700, background: "#f8d7da", color: "#721c24" }}>
+                    Deletion: {selectedUser.deletionStatus}
+                  </span>
+                )}
+              </div>
+
+              {/* Safety stats */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "0.75rem", marginBottom: "1.5rem" }}>
+                <div style={{ backgroundColor: "#f8f9fa", padding: "0.75rem", borderRadius: "4px", textAlign: "center" }}>
+                  <small style={{ color: "#666" }}>Bookings</small>
+                  <p style={{ fontSize: "1.3rem", margin: "0.25rem 0", fontWeight: "bold" }}>{selectedUser.bookingCount}</p>
+                </div>
+                <div style={{ backgroundColor: "#f8f9fa", padding: "0.75rem", borderRadius: "4px", textAlign: "center" }}>
+                  <small style={{ color: "#666" }}>Reports</small>
+                  <p style={{ fontSize: "1.3rem", margin: "0.25rem 0", fontWeight: "bold" }}>{selectedUser.reportCount}</p>
+                </div>
+                <div style={{ backgroundColor: "#fff3cd", padding: "0.75rem", borderRadius: "4px", textAlign: "center" }}>
+                  <small style={{ color: "#666" }}>Warnings</small>
+                  <p style={{ fontSize: "1.3rem", margin: "0.25rem 0", fontWeight: "bold" }}>{selectedUser.warnings}</p>
+                </div>
+                <div style={{ backgroundColor: "#f8d7da", padding: "0.75rem", borderRadius: "4px", textAlign: "center" }}>
+                  <small style={{ color: "#666" }}>Token Penalties</small>
+                  <p style={{ fontSize: "1.3rem", margin: "0.25rem 0", fontWeight: "bold" }}>{selectedUser.tokenLossPenalties}</p>
+                </div>
+              </div>
+
+              {/* Freeze actions */}
+              <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1.5rem" }}>
+                {selectedUser.isFrozen ? (
+                  <>
+                    <div style={{ flex: 1, backgroundColor: "#fff3cd", borderRadius: "8px", padding: "0.75rem" }}>
+                      <strong style={{ color: "#dc3545" }}>🔒 Account Frozen</strong>
+                      <p style={{ margin: "0.25rem 0", fontSize: "0.85rem" }}>Reason: {selectedUser.activeFreeze?.reason}</p>
+                      <p style={{ margin: "0.25rem 0", fontSize: "0.85rem" }}>Until: {selectedUser.activeFreeze ? new Date(selectedUser.activeFreeze.frozenUntil).toLocaleDateString() : "N/A"}</p>
+                    </div>
+                    <button
+                      onClick={() => handleUnfreezeUser(selectedUser.id)}
+                      disabled={actionLoading === selectedUser.id}
+                      style={{ padding: "0.5rem 1rem", backgroundColor: "#28a745", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", alignSelf: "center" }}
+                    >
+                      {actionLoading === selectedUser.id ? "..." : "Unfreeze"}
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => handleFreezeUser(selectedUser.id)}
+                    disabled={actionLoading === selectedUser.id}
+                    style={{ padding: "0.5rem 1rem", backgroundColor: "#dc3545", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+                  >
+                    {actionLoading === selectedUser.id ? "..." : "Freeze Account"}
+                  </button>
+                )}
+              </div>
+
+              {/* Incidents */}
+              {selectedUser.incidents.length > 0 && (
+                <div style={{ marginBottom: "1.5rem" }}>
+                  <h4 style={{ margin: "0 0 0.5rem" }}>Incidents ({selectedUser.incidents.length})</h4>
+                  {selectedUser.incidents.map(incident => (
+                    <div key={incident.id} style={{ fontSize: "0.85rem", padding: "0.5rem", backgroundColor: "#f8f9fa", marginBottom: "0.25rem", borderRadius: "4px" }}>
+                      <strong>{incident.type}</strong> • Booking: {incident.bookingId} • {new Date(incident.occurredAt).toLocaleDateString()}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Recent Bookings */}
+              <div style={{ marginBottom: "1.5rem" }}>
+                <h4 style={{ margin: "0 0 0.5rem" }}>Recent Bookings ({selectedUser.bookings.length})</h4>
+                {selectedUser.bookings.length === 0 ? (
+                  <p style={{ opacity: 0.6, fontStyle: "italic", fontSize: "0.9rem" }}>No bookings</p>
+                ) : (
+                  selectedUser.bookings.map(b => (
+                    <div key={b.id} style={{ fontSize: "0.85rem", padding: "0.5rem", backgroundColor: "#f8f9fa", marginBottom: "0.25rem", borderRadius: "4px", display: "flex", justifyContent: "space-between" }}>
+                      <span>{b.venueName} • {b.counterpartName}</span>
+                      <span className={`pill ${b.status === "completed" ? "ready" : b.status === "cancelled" ? "high" : "waitlist"}`} style={{ fontSize: "0.75rem" }}>
+                        {b.status}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {/* Recent Reports */}
+              {selectedUser.reports.length > 0 && (
+                <div>
+                  <h4 style={{ margin: "0 0 0.5rem" }}>Safety Reports ({selectedUser.reports.length})</h4>
+                  {selectedUser.reports.map(r => (
+                    <div key={r.id} style={{ fontSize: "0.85rem", padding: "0.5rem", backgroundColor: "#f8f9fa", marginBottom: "0.25rem", borderRadius: "4px", display: "flex", justifyContent: "space-between" }}>
+                      <span>{r.category} — {r.summary}</span>
+                      <span className={`pill ${r.severity}`} style={{ fontSize: "0.75rem" }}>{r.status}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {userView === "list" && (
+            <>
+              <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem", flexWrap: "wrap" }}>
+                <input
+                  placeholder="Search by name, phone, or ID..."
+                  value={userSearch}
+                  onChange={e => { setUserSearch(e.target.value); setUserOffset(0); }}
+                  style={{ ...inputStyle, flex: "1", minWidth: "200px" }}
+                />
+                <select value={userStatusFilter} onChange={e => { setUserStatusFilter(e.target.value); setUserOffset(0); }} style={{ ...inputStyle, width: "auto" }}>
+                  <option value="">All statuses</option>
+                  <option value="active">Active</option>
+                  <option value="frozen">Frozen</option>
+                  <option value="onboarding">Onboarding</option>
+                  <option value="deletion_pending">Deletion Pending</option>
+                </select>
+                <select value={userCityFilter} onChange={e => { setUserCityFilter(e.target.value); setUserOffset(0); }} style={{ ...inputStyle, width: "auto" }}>
+                  <option value="">All cities</option>
+                  <option value="Lagos">Lagos</option>
+                  <option value="Abuja">Abuja</option>
+                  <option value="PortHarcourt">Port Harcourt</option>
+                </select>
+              </div>
+              {userLoading ? (
+                <p>Loading users...</p>
+              ) : userList.length === 0 ? (
+                <p style={{ opacity: 0.6, fontStyle: "italic" }}>No users found</p>
+              ) : (
+                <>
+                  {userList.map((user) => (
+                    <div key={user.id} className="row" style={{ cursor: "pointer" }} onClick={() => fetchUserDetail(user.id)}>
+                      <div>
+                        <strong>{user.name}</strong>
+                        {user.isFrozen && <span style={{ marginLeft: "0.5rem", fontSize: "0.8rem", color: "#dc3545" }}>🔒 Frozen</span>}
+                        {user.deletionStatus && <span style={{ marginLeft: "0.5rem", fontSize: "0.8rem", color: "#721c24" }}>⚠ {user.deletionStatus}</span>}
+                        <p style={{ margin: "0.25rem 0", fontSize: "0.85rem", opacity: 0.8 }}>
+                          {user.phoneNumber || user.id} • {user.city || "No city"}
+                        </p>
+                        <small>
+                          {user.onboardingCompleted ? "Onboarded" : `Step: ${user.onboardingStep}`}
+                          {" "} • {user.bookingCount} bookings • {user.reportCount} reports
+                          {" "} • Joined {new Date(user.createdAt).toLocaleDateString()}
+                        </small>
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem", alignItems: "flex-end" }}>
+                        <div style={{ display: "flex", gap: "0.25rem" }}>
+                          <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: user.phoneVerified ? "#4CAF50" : "#ccc", display: "inline-block" }} title={user.phoneVerified ? "Phone verified" : "Phone not verified"} />
+                          <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: user.selfieVerified ? "#4CAF50" : "#ccc", display: "inline-block" }} title={user.selfieVerified ? "Selfie verified" : "Selfie not verified"} />
+                          <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: user.governmentIdVerified ? "#4CAF50" : "#ccc", display: "inline-block" }} title={user.governmentIdVerified ? "Gov ID verified" : "Gov ID not verified"} />
+                        </div>
+                        <span style={{ fontSize: "0.8rem", opacity: 0.6 }}>
+                          {actionLoading === user.id ? "Loading..." : "View →"}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                  {/* Pagination */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "1rem" }}>
+                    <small style={{ opacity: 0.7 }}>
+                      Showing {userOffset + 1}–{Math.min(userOffset + 25, userTotal)} of {userTotal}
+                    </small>
+                    <div style={{ display: "flex", gap: "0.5rem" }}>
+                      <button
+                        disabled={userOffset === 0}
+                        onClick={() => setUserOffset(Math.max(0, userOffset - 25))}
+                        style={{ padding: "0.3rem 0.6rem", fontSize: "0.8rem", cursor: userOffset === 0 ? "default" : "pointer", opacity: userOffset === 0 ? 0.5 : 1, border: "1px solid #ccc", borderRadius: "4px", background: "white" }}
+                      >
+                        ← Prev
+                      </button>
+                      <button
+                        disabled={userOffset + 25 >= userTotal}
+                        onClick={() => setUserOffset(userOffset + 25)}
+                        style={{ padding: "0.3rem 0.6rem", fontSize: "0.8rem", cursor: userOffset + 25 >= userTotal ? "default" : "pointer", opacity: userOffset + 25 >= userTotal ? 0.5 : 1, border: "1px solid #ccc", borderRadius: "4px", background: "white" }}
+                      >
+                        Next →
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </>
           )}
         </article>
 

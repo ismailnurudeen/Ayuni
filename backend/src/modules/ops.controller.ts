@@ -186,6 +186,47 @@ export class OpsController {
     );
   }
 
+  // ── User Management ───────────────────────────────────────────────
+
+  @Get("users")
+  listUsers(
+    @Query("search") search?: string,
+    @Query("status") status?: string,
+    @Query("city") city?: string,
+    @Query("limit") limit?: string,
+    @Query("offset") offset?: string
+  ) {
+    return this.appService.listOpsUsers({
+      search,
+      status,
+      city,
+      limit: limit ? parseInt(limit, 10) : undefined,
+      offset: offset ? parseInt(offset, 10) : undefined
+    });
+  }
+
+  @Get("users/:id")
+  getUserDetail(@Param("id") id: string) {
+    return this.appService.getOpsUserDetail(id);
+  }
+
+  @Post("users/:id/freeze")
+  freezeUser(
+    @Param("id") id: string,
+    @Body() body: { reason: string; durationDays?: number },
+    @Headers("x-user-id") opsUserId?: string
+  ) {
+    return this.appService.opsFreezeUser(id, body.reason, body.durationDays || 30, opsUserId);
+  }
+
+  @Post("users/:id/unfreeze")
+  unfreezeUser(
+    @Param("id") id: string,
+    @Headers("x-user-id") opsUserId?: string
+  ) {
+    return this.appService.opsUnfreezeUser(id, opsUserId);
+  }
+
   // ── P1-11: Account Deletion Admin ─────────────────────────────────
 
   @Post("account-deletions/process")

@@ -49,7 +49,9 @@ import {
   VerificationStatus,
   AccountDeletionRequest,
   DataExportPayload,
-  DataExportRequest
+  DataExportRequest,
+  OpsUser,
+  OpsUserDetail
 } from "./app.types";
 import { createInitialUserState, suggestionFixtures, venueFixtures } from "./demo-data";
 
@@ -1273,6 +1275,214 @@ export class AppService implements OnModuleInit {
       notifications: [],
       reactions: []
     };
+  }
+
+  // ── User Management ──────────────────────────────────────────────
+
+  async listOpsUsers(filters: {
+    search?: string;
+    status?: string;
+    city?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ users: OpsUser[]; total: number }> {
+    const limit = Math.min(filters.limit || 50, 100);
+    const offset = filters.offset || 0;
+
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    let paramIdx = 1;
+
+    if (filters.search) {
+      conditions.push(`(u.phone_number ILIKE $${paramIdx} OR (us.user_summary->>'firstName') ILIKE $${paramIdx} OR u.id ILIKE $${paramIdx})`);
+      params.push(`%${filters.search}%`);
+      paramIdx++;
+    }
+
+    if (filters.city) {
+      conditions.push(`(us.account_settings->>'residence') ILIKE $${paramIdx}`);
+      params.push(`%${filters.city}%`);
+      paramIdx++;
+    }
+
+    if (filters.status === "frozen") {
+      conditions.push(`(us.safety->'activeFreeze') IS NOT NULL AND (us.safety->'activeFreeze')::text != 'null'`);
+    } else if (filters.status === "active") {
+      conditions.push(`((us.safety->'activeFreeze') IS NULL OR (us.safety->'activeFreeze')::text = 'null')`);
+      conditions.push(`u.deletion_status IS NULL`);
+    } else if (filters.status === "deletion_pending") {
+      conditions.push(`u.deletion_status = 'pending'`);
+    } else if (filters.status === "onboarding") {
+      conditions.push(`(us.onboarding->>'completed')::text = 'false'`);
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const countResult = await this.database.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM users u LEFT JOIN user_states us ON u.id = us.user_id ${where}`,
+      params
+    );
+    const total = parseInt(countResult.rows[0]?.count || "0", 10);
+
+    const listParams = [...params, limit, offset];
+    const rows = await this.database.query<{
+      id: string;
+      phone_number: string;
+      created_at: string;
+      updated_at: string;
+      deletion_status?: string;
+      user_summary: any;
+      onboarding: any;
+      verification: any;
+      safety: any;
+      account_settings: any;
+      booking_count: string;
+      report_count: string;
+    }>(
+      `SELECT u.id, u.phone_number, u.created_at, u.updated_at, u.deletion_status,
+              us.user_summary, us.onboarding, us.verification, us.safety, us.account_settings,
+              (SELECT COUNT(*)::text FROM bookings b WHERE b.user_id = u.id) AS booking_count,
+              (SELECT COUNT(*)::text FROM safety_reports sr WHERE sr.user_id = u.id) AS report_count
+       FROM users u
+       LEFT JOIN user_states us ON u.id = us.user_id
+       ${where}
+       ORDER BY u.created_at DESC
+       LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`,
+      listParams
+    );
+
+    const users: OpsUser[] = rows.rows.map(row => {
+      const safety = row.safety || {};
+      const onboarding = row.onboarding || {};
+      const verification = row.verification || {};
+      const summary = row.user_summary || {};
+      const settings = row.account_settings || {};
+
+      return {
+        id: row.id,
+        phoneNumber: row.phone_number || "",
+        name: summary.firstName || "Unknown",
+        city: settings.residence || "",
+        onboardingStep: onboarding.step || "Unknown",
+        onboardingCompleted: onboarding.completed || false,
+        phoneVerified: verification.phoneVerified || false,
+        selfieVerified: verification.selfieVerified || false,
+        governmentIdVerified: verification.governmentIdVerified || false,
+        isFrozen: !!safety.activeFreeze,
+        freezeReason: safety.activeFreeze?.reason,
+        bookingCount: parseInt(row.booking_count || "0", 10),
+        reportCount: parseInt(row.report_count || "0", 10),
+        deletionStatus: row.deletion_status || undefined,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at
+      };
+    });
+
+    return { users, total };
+  }
+
+  async getOpsUserDetail(userId: string): Promise<OpsUserDetail> {
+    const userRow = await this.database.query<{
+      id: string;
+      phone_number: string;
+      created_at: string;
+      updated_at: string;
+      deletion_status?: string;
+    }>("SELECT id, phone_number, created_at, updated_at, deletion_status FROM users WHERE id = $1", [userId]);
+
+    if (!userRow.rows.length) {
+      throw new Error(`User ${userId} not found`);
+    }
+
+    const user = userRow.rows[0];
+    const state = await this.loadState(userId);
+
+    const [bookingRows, reportRows] = await Promise.all([
+      this.database.query<{ payload: DateBooking }>(
+        "SELECT payload FROM bookings WHERE user_id = $1 ORDER BY created_at DESC LIMIT 20",
+        [userId]
+      ),
+      this.database.query<{ payload: SafetyReport }>(
+        "SELECT payload FROM safety_reports WHERE user_id = $1 ORDER BY created_at DESC LIMIT 20",
+        [userId]
+      )
+    ]);
+
+    const bookings = bookingRows.rows.map(r => r.payload);
+    const reports = reportRows.rows.map(r => r.payload);
+    const bookingCount = bookings.length;
+    const reportCount = reports.length;
+
+    return {
+      id: user.id,
+      phoneNumber: user.phone_number || "",
+      name: state.userSummary?.firstName || "Unknown",
+      city: state.accountSettings?.residence || "",
+      onboardingStep: state.onboarding?.step || "Unknown",
+      onboardingCompleted: state.onboarding?.completed || false,
+      phoneVerified: state.verification?.phoneVerified || false,
+      selfieVerified: state.verification?.selfieVerified || false,
+      governmentIdVerified: state.verification?.governmentIdVerified || false,
+      isFrozen: !!state.safety?.activeFreeze,
+      freezeReason: state.safety?.activeFreeze?.reason,
+      bookingCount,
+      reportCount,
+      deletionStatus: user.deletion_status || undefined,
+      createdAt: user.created_at,
+      updatedAt: user.updated_at,
+      bio: state.editableProfile?.bio || "",
+      interests: state.editableProfile?.interests || [],
+      traits: state.editableProfile?.traits || [],
+      education: state.editableProfile?.education || "",
+      occupation: state.editableProfile?.job || "",
+      gender: state.accountSettings?.gender || "",
+      birthDate: state.accountSettings?.birthDate || "",
+      datingIntention: state.editableProfile?.datingIntention || "",
+      warnings: state.safety?.warnings || 0,
+      tokenLossPenalties: state.safety?.tokenLossPenalties || 0,
+      incidents: state.safety?.incidents || [],
+      activeFreeze: state.safety?.activeFreeze,
+      bookings,
+      reports
+    };
+  }
+
+  async opsFreezeUser(userId: string, reason: string, durationDays: number, opsUserId?: string) {
+    const operator = opsUserId?.trim() || "ops-system";
+
+    const state = await this.loadState(userId);
+    const now = new Date();
+    const frozenUntil = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
+
+    state.safety.activeFreeze = {
+      id: `freeze-${Date.now()}`,
+      reason,
+      incidentCount: state.safety.incidents?.length || 0,
+      frozenAt: now.toISOString(),
+      frozenUntil: frozenUntil.toISOString(),
+      canAppeal: true
+    };
+
+    await this.database.query(
+      "UPDATE user_states SET safety = $1, updated_at = NOW() WHERE user_id = $2",
+      [state.safety, userId]
+    );
+
+    return this.getOpsUserDetail(userId);
+  }
+
+  async opsUnfreezeUser(userId: string, opsUserId?: string) {
+    const operator = opsUserId?.trim() || "ops-system";
+
+    const state = await this.loadState(userId);
+    state.safety.activeFreeze = undefined;
+
+    await this.database.query(
+      "UPDATE user_states SET safety = $1, updated_at = NOW() WHERE user_id = $2",
+      [state.safety, userId]
+    );
+
+    return this.getOpsUserDetail(userId);
   }
 
   async resolveReport(reportId: string, rawUserId?: string, resolutionNotes?: string) {
