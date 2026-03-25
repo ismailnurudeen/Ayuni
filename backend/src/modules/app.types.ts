@@ -564,3 +564,30 @@ export type DataExportPayload = {
   }>;
 };
 
+// ── Analytics ──────────────────────────────────────────────────────
+
+export type AnalyticsEvent = {
+  id: string;
+  userIdHash: string;
+  eventName: string;
+  properties: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type AnalyticsEventInput = {
+  eventName: string;
+  properties?: Record<string, unknown>;
+  timestamp?: string;
+};
+
+export type FunnelStep = {
+  step: string;
+  count: number;
+};
+
+export type FunnelResult = {
+  name: string;
+  steps: FunnelStep[];
+  period: string;
+};
+

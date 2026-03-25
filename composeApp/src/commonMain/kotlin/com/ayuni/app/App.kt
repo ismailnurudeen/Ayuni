@@ -8,6 +8,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -18,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
 import com.ayuni.app.data.api.AyuniApiClient
+import com.ayuni.app.data.analytics.AnalyticsTracker
 import com.ayuni.app.data.repository.AyuniRepository
 import com.ayuni.app.platform.createTokenStorage
 import com.ayuni.app.ui.AppRoute
@@ -50,6 +52,10 @@ fun AyuniApp() {
     val tokenStorage = remember { createTokenStorage() }
     val apiClient = remember { AyuniApiClient(tokenStorage) }
     val repository = remember { AyuniRepository(apiClient) }
+    val analytics = remember { AnalyticsTracker(apiClient) }
+
+    // Flush analytics when leaving composition
+    DisposableEffect(Unit) { onDispose { analytics.flush() } }
 
     // Create state holders for each feature domain
     val appStateHolder = rememberAppStateHolder(repository, tokenStorage)
@@ -164,6 +170,7 @@ fun AyuniApp() {
                     !state.onboarding.completed -> when (onboardingStep) {
                         OnboardingFlowStep.Welcome -> WelcomeScreen(
                             onContinue = {
+                                analytics.track("onboarding_welcome_viewed")
                                 onboardingStateHolder.clearError()
                                 onboardingStep = OnboardingFlowStep.Phone
                             }
@@ -175,6 +182,7 @@ fun AyuniApp() {
                             errorMessage = onboardingStateHolder.errorMessage.value,
                             onBack = { onboardingStep = OnboardingFlowStep.Welcome },
                             onSubmit = { phone ->
+                                analytics.track("onboarding_phone_submitted")
                                 onboardingStateHolder.requestPhoneOtp(phone) {
                                     onboardingStep = OnboardingFlowStep.Otp
                                 }
@@ -187,6 +195,7 @@ fun AyuniApp() {
                             errorMessage = onboardingStateHolder.errorMessage.value,
                             onBack = { onboardingStep = OnboardingFlowStep.Phone },
                             onSubmit = { code ->
+                                analytics.track("onboarding_otp_verified")
                                 onboardingStateHolder.verifyPhoneOtp(
                                     onboardingStateHolder.pendingPhoneNumber.value,
                                     code
@@ -223,7 +232,10 @@ fun AyuniApp() {
                                     state = state,
                                     activeProfiles = activeProfiles,
                                     onOpenReactedPage = { roundScreen = RoundScreen.Reacted },
-                                    onProfileSelected = { selectedDrawerProfileId = it.id },
+                                    onProfileSelected = {
+                                        analytics.track("round_profile_viewed", mapOf("profileId" to it.id))
+                                        selectedDrawerProfileId = it.id
+                                    },
                                     onOpenNotifications = { route = AppRoute.Notifications }
                                 )
 
@@ -279,6 +291,7 @@ fun AyuniApp() {
                                 ProfileScreen.SelfieVerification -> SelfieVerificationScreen(
                                     isVerified = state.verification.selfieVerified,
                                     onSubmitSelfie = { imageUrl ->
+                                        analytics.track("selfie_submitted")
                                         repository.submitSelfie(imageUrl)
                                     },
                                     onBack = { profileScreen = ProfileScreen.Hub }

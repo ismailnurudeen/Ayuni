@@ -10,6 +10,7 @@ import { MediaController } from "./media.controller";
 import { OpsController } from "./ops.controller";
 import { WebhookController } from "./webhook.controller";
 import { ReminderController } from "./reminder.controller";
+import { AnalyticsController } from "./analytics.controller";
 import { AppService } from "./app.service";
 import { AuthService } from "./auth.service";
 import { AuthGuard } from "./auth.guard";
@@ -20,6 +21,7 @@ import { ReminderService } from "./reminder.service";
 import { MediaService } from "./media.service";
 import { PaystackService } from "./paystack.service";
 import { PushService } from "./push.service";
+import { AnalyticsService } from "./analytics.service";
 import { DatabaseService } from "../database/database.service";
 
 @Module({
@@ -34,8 +36,9 @@ import { DatabaseService } from "../database/database.service";
     BookingController,
     SafetyController,
     WebhookController,
-    ReminderController
+    ReminderController,
+    AnalyticsController
   ],
-  providers: [DatabaseService, AppService, AuthService, AuthGuard, OtpService, TwilioSmsService, WhatsAppService, ReminderService, MediaService, PaystackService, PushService]
+  providers: [DatabaseService, AppService, AuthService, AuthGuard, OtpService, TwilioSmsService, WhatsAppService, ReminderService, MediaService, PaystackService, PushService, AnalyticsService]
 })  
 export class AppModule {}

@@ -243,3 +243,22 @@ data class ConsentAcceptRequest(
 data class ConsentAcceptResponse(
     val accepted: Boolean,
 )
+
+// ── Analytics ──────────────────────────────────────────────────────
+
+@Serializable
+data class AnalyticsEventPayload(
+    val eventName: String,
+    val properties: Map<String, String> = emptyMap(),
+    val timestamp: String? = null,
+)
+
+@Serializable
+data class AnalyticsBatchRequest(
+    val events: List<AnalyticsEventPayload>,
+)
+
+@Serializable
+data class AnalyticsBatchResponse(
+    val ingested: Int = 0,
+)

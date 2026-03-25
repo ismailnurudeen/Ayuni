@@ -80,3 +80,26 @@ Without analytics, there is no visibility into where users drop off, which featu
 - [ ] PII scrubbing verified on sample events.
 
 ## Completion Notes
+
+### Implementation Summary
+
+**Backend:**
+- Migration `014_add_analytics_events.sql` — `analytics_events` table with `user_id_hash`, `event_name`, `properties` (JSONB), `created_at`, indexed on name/date/user hash.
+- `analytics.service.ts` — SHA-256 user ID hashing, PII scrubbing, single event tracking, batch ingestion, funnel query engine (onboarding/round/booking/verification), raw event export with filtering/pagination.
+- `analytics.controller.ts` — `POST /analytics/events` (AuthGuard, mobile batch ingest), `GET /analytics/funnel` (ops), `GET /analytics/events` (ops export).
+- Server-side event emission in `app.service.ts` at key state transitions: `onboarding_basic_profile_completed`, `selfie_submitted`, `selfie_approved`, `selfie_rejected`, `gov_id_submitted`, `gov_id_approved`, `gov_id_rejected`, `round_reaction_submitted`, `match_accepted`, `availability_submitted`, `booking_confirmed`, `payment_initiated`, `payment_completed`.
+
+**Mobile:**
+- `AnalyticsTracker.kt` — coroutine-based batching tracker with configurable batch size, automatic retry on flush failure, `DisposableEffect` flush on app background.
+- Client-side events: `onboarding_welcome_viewed`, `onboarding_phone_submitted`, `onboarding_otp_verified`, `round_profile_viewed`, `selfie_submitted`.
+- `AyuniApiClient.sendAnalyticsBatch()` for batch upload to `/analytics/events`.
+
+**Ops Console:**
+- Funnel visualization panel with bar chart rendering, conversion % between steps, tab selector for onboarding/round/booking/verification funnels, 30-day rolling window.
+
+**Privacy:**
+- User IDs hashed with SHA-256 (truncated to 16 chars) before storage.
+- PII fields (phone, email, name, address, etc.) stripped from all event properties.
+- Analytics endpoint requires authentication (AuthGuard for mobile, x-user-id for ops).
+
+**Tests:** 10 new analytics-specific tests covering event tracking, PII scrubbing, batch ingestion, funnel queries, and integration with AppService methods. All 163 tests pass across 5 suites.

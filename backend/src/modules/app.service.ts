@@ -9,6 +9,7 @@ import { MediaService } from "./media.service";
 import { PaystackService } from "./paystack.service";
 import { ReminderService } from "./reminder.service";
 import { PushService } from "./push.service";
+import { AnalyticsService } from "./analytics.service";
 import {
   AccountSettings,
   AppPreferences,
@@ -102,7 +103,8 @@ export class AppService implements OnModuleInit {
     private readonly mediaService: MediaService,
     private readonly paystackService: PaystackService,
     private readonly reminderService: ReminderService,
-    private readonly pushService: PushService
+    private readonly pushService: PushService,
+    private readonly analyticsService: AnalyticsService
   ) {}
 
   async onModuleInit() {
@@ -288,6 +290,8 @@ export class AppService implements OnModuleInit {
       await this.saveState(userId, state, client);
     });
 
+    await this.analyticsService.trackEvent(userId, "onboarding_basic_profile_completed", { city: body.city });
+
     return this.getBootstrap(userId);
   }
 
@@ -325,7 +329,7 @@ export class AppService implements OnModuleInit {
     const userId = this.resolveUserId(rawUserId);
     await this.ensureUser(userId);
 
-    return await this.database.withTransaction(async (client) => {
+    const result = await this.database.withTransaction(async (client) => {
       const submissionId = this.generateId();
       
       // Create selfie submission in pending state
@@ -354,6 +358,8 @@ export class AppService implements OnModuleInit {
         message: "Selfie submitted successfully and is awaiting review"
       };
     });
+    await this.analyticsService.trackEvent(userId, "selfie_submitted", {});
+    return result;
   }
 
   async verifySelfie(rawUserId?: string) {
@@ -413,7 +419,7 @@ export class AppService implements OnModuleInit {
     const userId = this.resolveUserId(rawUserId);
     await this.ensureUser(userId);
 
-    return await this.database.withTransaction(async (client) => {
+    const result = await this.database.withTransaction(async (client) => {
       const submissionId = this.generateId();
       
       // Create gov ID submission in pending state
@@ -446,6 +452,8 @@ export class AppService implements OnModuleInit {
         message: "Government ID submitted successfully and is awaiting review"
       };
     });
+    await this.analyticsService.trackEvent(userId, "gov_id_submitted", { idType });
+    return result;
   }
 
   async getDailySuggestions(city: City, rawUserId?: string) {
@@ -506,6 +514,11 @@ export class AppService implements OnModuleInit {
         ...result,
         bootstrap: await this.getBootstrap(userId)
       };
+    }
+
+    await this.analyticsService.trackEvent(userId, "round_reaction_submitted", { matchId, reaction: result.nextStep === "availability" ? "accept" : "reject" });
+    if (result.nextStep === "availability") {
+      await this.analyticsService.trackEvent(userId, "match_accepted", { matchId });
     }
 
     return {
@@ -608,6 +621,8 @@ export class AppService implements OnModuleInit {
         paymentRequired: true
       };
     });
+
+    await this.analyticsService.trackEvent(userId, "availability_submitted", { matchId });
   }
 
   async initiateDateToken(paymentMethod: PaymentMethod, rawUserId?: string, bookingId?: string) {
@@ -669,6 +684,8 @@ export class AppService implements OnModuleInit {
       await this.saveState(userId, state, client);
       return record;
     });
+
+    await this.analyticsService.trackEvent(userId, "payment_initiated", { paymentMethod, bookingId: bookingId || "" });
 
     return payment;
   }
@@ -771,6 +788,8 @@ export class AppService implements OnModuleInit {
 
       console.log(`✓ Payment ${paymentId} completed for user ${userId}`);
     });
+
+    await this.analyticsService.trackEvent(userId!, "payment_completed", { bookingId: bookingId || "" });
   }
 
   async handlePaymentFailure(reference: string, userId?: string, paymentId?: string) {
@@ -923,6 +942,8 @@ export class AppService implements OnModuleInit {
       await this.saveState(userId, state, client);
       return finalBooking;
     });
+
+    await this.analyticsService.trackEvent(userId, "booking_confirmed", { matchId, bookingId: booking.id });
 
     return {
       matchId,
@@ -1582,6 +1603,7 @@ export class AppService implements OnModuleInit {
   }
 
   async approveSelfie(submissionId: string, opsUserId?: string) {
+    let targetUserId: string | undefined;
     await this.database.withTransaction(async (client) => {
       // Get submission
       const row = await client.query<{ user_id: string }>(
@@ -1594,6 +1616,7 @@ export class AppService implements OnModuleInit {
       }
 
       const userId = row.rows[0].user_id;
+      targetUserId = userId;
 
       // Update submission to approved
       await client.query(
@@ -1617,10 +1640,15 @@ export class AppService implements OnModuleInit {
       await this.saveState(userId, state, client);
     });
 
+    if (targetUserId) {
+      await this.analyticsService.trackEvent(targetUserId, "selfie_approved", {});
+    }
+
     return this.getOpsDashboard(opsUserId);
   }
 
   async rejectSelfie(submissionId: string, opsUserId?: string) {
+    let targetUserId: string | undefined;
     await this.database.withTransaction(async (client) => {
       // Get submission
       const row = await client.query<{ user_id: string }>(
@@ -1633,6 +1661,7 @@ export class AppService implements OnModuleInit {
       }
 
       const userId = row.rows[0].user_id;
+      targetUserId = userId;
 
       // Update submission to rejected
       await client.query(
@@ -1655,10 +1684,15 @@ export class AppService implements OnModuleInit {
       await this.saveState(userId, state, client);
     });
 
+    if (targetUserId) {
+      await this.analyticsService.trackEvent(targetUserId, "selfie_rejected", {});
+    }
+
     return this.getOpsDashboard(opsUserId);
   }
 
   async approveGovId(submissionId: string, opsUserId?: string) {
+    let targetUserId: string | undefined;
     await this.database.withTransaction(async (client) => {
       // Get submission
       const row = await client.query<{ user_id: string }>(
@@ -1671,6 +1705,7 @@ export class AppService implements OnModuleInit {
       }
 
       const userId = row.rows[0].user_id;
+      targetUserId = userId;
 
       // Update submission to approved
       await client.query(
@@ -1695,10 +1730,15 @@ export class AppService implements OnModuleInit {
       await this.saveState(userId, state, client);
     });
 
+    if (targetUserId) {
+      await this.analyticsService.trackEvent(targetUserId, "gov_id_approved", {});
+    }
+
     return this.getOpsDashboard(opsUserId);
   }
 
   async rejectGovId(submissionId: string, reason?: string, opsUserId?: string) {
+    let targetUserId: string | undefined;
     await this.database.withTransaction(async (client) => {
       // Get submission
       const row = await client.query<{ user_id: string }>(
@@ -1711,6 +1751,7 @@ export class AppService implements OnModuleInit {
       }
 
       const userId = row.rows[0].user_id;
+      targetUserId = userId;
       const rejectionReason = reason || "ID image quality or document validity could not be verified";
 
       // Update submission to rejected
@@ -1737,6 +1778,10 @@ export class AppService implements OnModuleInit {
       );
       await this.saveState(userId, state, client);
     });
+
+    if (targetUserId) {
+      await this.analyticsService.trackEvent(targetUserId, "gov_id_rejected", {});
+    }
 
     return this.getOpsDashboard(opsUserId);
   }

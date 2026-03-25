@@ -196,6 +196,11 @@ export function App() {
   const [notifBody, setNotifBody] = useState("");
   const [notifType, setNotifType] = useState("general");
 
+  // Analytics funnel state
+  const [selectedFunnel, setSelectedFunnel] = useState("onboarding");
+  const [funnelData, setFunnelData] = useState<{ name: string; steps: { step: string; count: number }[]; period: string } | null>(null);
+  const [funnelLoading, setFunnelLoading] = useState(false);
+
   const fetchDashboard = async () => {
     try {
       setLoading(true);
@@ -242,6 +247,30 @@ export function App() {
   useEffect(() => {
     fetchDeliveryLogs();
   }, [deliveryLogFilter]);
+
+  const fetchFunnel = async (name: string) => {
+    setFunnelLoading(true);
+    try {
+      const now = new Date();
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30).toISOString();
+      const end = now.toISOString();
+      const res = await fetch(
+        `${API_BASE}/analytics/funnel?name=${encodeURIComponent(name)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
+        { headers: { "x-user-id": "ops-user" } }
+      );
+      if (!res.ok) throw new Error("Failed to load funnel");
+      setFunnelData(await res.json());
+    } catch (err) {
+      console.error("Funnel fetch error:", err);
+      setFunnelData(null);
+    } finally {
+      setFunnelLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchFunnel(selectedFunnel);
+  }, [selectedFunnel]);
 
   // ── Venue Management Handlers ────────────────────────────────────
 
@@ -1370,6 +1399,74 @@ export function App() {
                 </span>
               </div>
             ))
+          )}
+        </article>
+
+        <article className="panel" style={{ gridColumn: "1 / -1" }}>
+          <h2>Funnel Analytics (last 30 days)</h2>
+          <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem" }}>
+            {["onboarding", "round", "booking", "verification"].map((f) => (
+              <button
+                key={f}
+                onClick={() => setSelectedFunnel(f)}
+                style={{
+                  padding: "0.4rem 0.75rem",
+                  fontSize: "0.85rem",
+                  borderRadius: "4px",
+                  border: selectedFunnel === f ? "2px solid #C17F5F" : "1px solid #ccc",
+                  background: selectedFunnel === f ? "#FFF5EE" : "#fff",
+                  cursor: "pointer",
+                  textTransform: "capitalize",
+                }}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
+          {funnelLoading ? (
+            <p>Loading funnel…</p>
+          ) : funnelData && funnelData.steps.length > 0 ? (
+            <div>
+              <p style={{ fontSize: "0.85rem", opacity: 0.7, marginBottom: "0.5rem" }}>
+                {funnelData.period}
+              </p>
+              {(() => {
+                const maxCount = Math.max(...funnelData.steps.map((s) => s.count), 1);
+                return funnelData.steps.map((step, i) => (
+                  <div key={step.step} style={{ marginBottom: "0.5rem" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.85rem", marginBottom: "0.2rem" }}>
+                      <span>{step.step.replace(/_/g, " ")}</span>
+                      <strong>{step.count}</strong>
+                    </div>
+                    <div
+                      style={{
+                        height: "8px",
+                        borderRadius: "4px",
+                        background: "#eee",
+                        overflow: "hidden",
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: `${(step.count / maxCount) * 100}%`,
+                          height: "100%",
+                          background: "#C17F5F",
+                          borderRadius: "4px",
+                          transition: "width 0.3s ease",
+                        }}
+                      />
+                    </div>
+                    {i > 0 && funnelData.steps[i - 1].count > 0 && (
+                      <small style={{ opacity: 0.6 }}>
+                        {((step.count / funnelData.steps[i - 1].count) * 100).toFixed(1)}% conversion
+                      </small>
+                    )}
+                  </div>
+                ));
+              })()}
+            </div>
+          ) : (
+            <p style={{ opacity: 0.6, fontStyle: "italic" }}>No funnel data available yet</p>
           )}
         </article>
       </section>

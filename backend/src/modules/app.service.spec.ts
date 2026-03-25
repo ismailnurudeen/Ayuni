@@ -9,6 +9,7 @@ import { PaystackService } from "./paystack.service";
 import { ReminderService } from "./reminder.service";
 import { WhatsAppService } from "./whatsapp.service";
 import { PushService } from "./push.service";
+import { AnalyticsService } from "./analytics.service";
 import { AppService } from "./app.service";
 import { SafetyReport } from "./app.types";
 
@@ -23,6 +24,7 @@ describe("AppService", () => {
   let whatsappService: WhatsAppService;
   let reminderService: ReminderService;
   let pushService: PushService;
+  let analyticsService: AnalyticsService;
   let service: AppService;
 
   beforeEach(async () => {
@@ -41,7 +43,8 @@ describe("AppService", () => {
     whatsappService = new WhatsAppService();
     reminderService = new ReminderService(databaseService, whatsappService, smsService);
     pushService = new PushService(databaseService);
-    service = new AppService(databaseService, authService, otpService, smsService, mediaService, paystackService, reminderService, pushService);
+    analyticsService = new AnalyticsService(databaseService);
+    service = new AppService(databaseService, authService, otpService, smsService, mediaService, paystackService, reminderService, pushService, analyticsService);
     await service.onModuleInit();
   });
 
@@ -93,7 +96,8 @@ describe("AppService", () => {
     const restartedWhatsAppService = new WhatsAppService();
     const restartedReminderService = new ReminderService(restartedDatabaseService, restartedWhatsAppService, restartedSmsService);
     const restartedPushService = new PushService(restartedDatabaseService);
-    const restartedService = new AppService(restartedDatabaseService, restartedAuthService, restartedOtpService, restartedSmsService, restartedMediaService, restartedPaystackService, restartedReminderService, restartedPushService);
+    const restartedAnalyticsService = new AnalyticsService(restartedDatabaseService);
+    const restartedService = new AppService(restartedDatabaseService, restartedAuthService, restartedOtpService, restartedSmsService, restartedMediaService, restartedPaystackService, restartedReminderService, restartedPushService, restartedAnalyticsService);
     await restartedService.onModuleInit();
 
     const bootstrap = await restartedService.getBootstrap("demo-user");
@@ -569,7 +573,7 @@ describe("AppService", () => {
       );
 
       // Simulate restart by creating new service instance
-      const newService = new AppService(databaseService, authService, otpService, smsService, mediaService, paystackService, reminderService, pushService);
+      const newService = new AppService(databaseService, authService, otpService, smsService, mediaService, paystackService, reminderService, pushService, analyticsService);
       const restartedBootstrap = await newService.getBootstrap("booking-user-4");
 
       const booking = restartedBootstrap.bookings.find((b) => b.id === result.bookingId);
@@ -1955,6 +1959,106 @@ describe("AppService", () => {
       await service.registerDeviceToken("dt-dash-user", "android", "tok-dash-1");
       const dashboard = await service.getOpsDashboard("ops-user");
       expect(dashboard.overview.totalDeviceTokens).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  // ── Analytics (P1-07) ────────────────────────────────────────────
+
+  describe("Analytics", () => {
+    it("tracks an event and stores it in analytics_events", async () => {
+      await analyticsService.trackEvent("analytics-user-1", "test_event", { screen: "home" });
+      const events = await analyticsService.getEvents({ eventName: "test_event" });
+      expect(events.length).toBe(1);
+      expect(events[0].eventName).toBe("test_event");
+      expect(events[0].properties).toEqual({ screen: "home" });
+    });
+
+    it("hashes user IDs for privacy", async () => {
+      await analyticsService.trackEvent("analytics-user-2", "hash_check", {});
+      const events = await analyticsService.getEvents({ eventName: "hash_check" });
+      expect(events[0].userIdHash).not.toBe("analytics-user-2");
+      expect(events[0].userIdHash.length).toBe(16);
+    });
+
+    it("scrubs PII fields from event properties", async () => {
+      await analyticsService.trackEvent("analytics-user-3", "pii_test", {
+        phone: "08012345678",
+        email: "user@example.com",
+        name: "Secret Name",
+        screen: "profile",
+        city: "Lagos",
+      });
+      const events = await analyticsService.getEvents({ eventName: "pii_test" });
+      expect(events[0].properties).toEqual({ screen: "profile", city: "Lagos" });
+      expect(events[0].properties).not.toHaveProperty("phone");
+      expect(events[0].properties).not.toHaveProperty("email");
+      expect(events[0].properties).not.toHaveProperty("name");
+    });
+
+    it("ingests a batch of events from mobile", async () => {
+      const result = await analyticsService.ingestBatch("batch-user", [
+        { eventName: "onboarding_welcome_viewed" },
+        { eventName: "onboarding_phone_submitted", properties: { city: "Abuja" } },
+        { eventName: "onboarding_otp_verified" },
+      ]);
+      expect(result.ingested).toBe(3);
+      const events = await analyticsService.getEvents({});
+      expect(events.length).toBeGreaterThanOrEqual(3);
+    });
+
+    it("queries a funnel and returns step counts", async () => {
+      await analyticsService.trackEvent("funnel-user-1", "onboarding_welcome_viewed", {});
+      await analyticsService.trackEvent("funnel-user-2", "onboarding_welcome_viewed", {});
+      await analyticsService.trackEvent("funnel-user-1", "onboarding_phone_submitted", {});
+      await analyticsService.trackEvent("funnel-user-1", "onboarding_otp_verified", {});
+      await analyticsService.trackEvent("funnel-user-1", "onboarding_basic_profile_completed", {});
+
+      const start = new Date(Date.now() - 86400000).toISOString();
+      const end = new Date(Date.now() + 86400000).toISOString();
+      const funnel = await analyticsService.queryFunnel("onboarding", start, end);
+
+      expect(funnel.name).toBe("onboarding");
+      expect(funnel.steps.length).toBe(4);
+      expect(funnel.steps[0].step).toBe("onboarding_welcome_viewed");
+      // At least 1 distinct user for welcome step (hash-based count)
+      expect(funnel.steps[0].count).toBeGreaterThanOrEqual(1);
+    });
+
+    it("returns empty steps for unknown funnel", async () => {
+      const funnel = await analyticsService.queryFunnel("nonexistent", "2024-01-01", "2025-01-01");
+      expect(funnel.steps).toEqual([]);
+    });
+
+    it("completeBasicOnboarding emits analytics event", async () => {
+      await service.completeBasicOnboarding({
+        firstName: "Zara",
+        birthDate: "1998-05-01",
+        genderIdentity: "Woman",
+        interestedIn: "Man",
+        city: "Lagos",
+        acceptedTerms: true,
+      }, "analytics-onboard-user");
+
+      const events = await analyticsService.getEvents({ eventName: "onboarding_basic_profile_completed" });
+      expect(events.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("submitSelfie emits selfie_submitted event", async () => {
+      await service.getBootstrap("analytics-selfie-user");
+      await service.submitSelfie("https://example.com/selfie.jpg", "analytics-selfie-user");
+
+      const events = await analyticsService.getEvents({ eventName: "selfie_submitted" });
+      expect(events.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("respondToMatch emits round_reaction_submitted event", async () => {
+      await service.getBootstrap("analytics-match-user");
+      const suggestions = await service.getDailySuggestions("Lagos", "analytics-match-user");
+      if (suggestions.length > 0) {
+        await service.respondToMatch(suggestions[0].id, "accept", "analytics-match-user");
+        const events = await analyticsService.getEvents({ eventName: "round_reaction_submitted" });
+        expect(events.length).toBeGreaterThanOrEqual(1);
+      }
     });
   });
 });

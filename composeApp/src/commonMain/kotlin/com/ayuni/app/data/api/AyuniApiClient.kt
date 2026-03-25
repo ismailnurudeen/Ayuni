@@ -249,4 +249,12 @@ class AyuniApiClient(
             contentType(ContentType.Application.Json)
             setBody(ConsentAcceptRequest(termsVersion = termsVersion, privacyVersion = privacyVersion))
         }.body<ConsentAcceptResponse>()
+
+    // ── Analytics ───────────────────────────────────────────────────
+
+    suspend fun sendAnalyticsBatch(events: List<AnalyticsEventPayload>): AnalyticsBatchResponse =
+        httpClient.post("$baseUrl/analytics/events") {
+            contentType(ContentType.Application.Json)
+            setBody(AnalyticsBatchRequest(events = events))
+        }.body<AnalyticsBatchResponse>()
 }
