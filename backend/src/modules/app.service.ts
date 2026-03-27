@@ -110,7 +110,8 @@ export class AppService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    await this.seedCatalogData();
+    // Demo data seeding disabled
+    // await this.seedCatalogData();
   }
 
   health() {
